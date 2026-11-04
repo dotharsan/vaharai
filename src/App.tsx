@@ -291,8 +291,14 @@ export default function App() {
               }
             }
             if (Array.isArray(central.tokens) && central.tokens.length > 0) {
-              setTokens(central.tokens);
-              saveTokens(central.tokens);
+              const localTokens = loadTokens();
+              const existingTokenIds = new Set(localTokens.map((t) => t.id));
+              const newTokens = central.tokens.filter((t: QueueToken) => !existingTokenIds.has(t.id));
+              if (newTokens.length > 0) {
+                const mergedTokens = [...localTokens, ...newTokens];
+                setTokens(mergedTokens);
+                saveTokens(mergedTokens);
+              }
             }
             if (Array.isArray(central.assistance) && central.assistance.length > 0) {
               const localAssistance = loadAssistanceRecords();
@@ -754,6 +760,9 @@ export default function App() {
             divisions={divisions}
             services={services}
             assistanceRecords={assistanceRecords}
+            pregnantMothers={pregnantMothers}
+            landRecords={landRecords}
+            households={households}
             currentUser={currentUser}
             lang={lang}
             onUpdateTokens={handleUpdateTokens}

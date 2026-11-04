@@ -1,11 +1,33 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Beneficiary, GNDivision, QueueToken, AssistanceRecord, ALL_WELFARE_SCHEMES_LIST } from '../types';
+import {
+  Beneficiary,
+  GNDivision,
+  QueueToken,
+  AssistanceRecord,
+  PregnantMotherRecord,
+  LandRecord,
+  HouseholdData,
+  ALL_WELFARE_SCHEMES_LIST,
+} from '../types';
 import { Language, translations } from '../translations/i18n';
 import { VaharaiLogo } from './VaharaiLogo';
 import { renderBarcodeSvg, generateQrDataUrl } from '../utils/barcode';
 import { calculateAge } from '../services/storage';
 import { getRelationshipTamilLabel } from '../services/csv';
-import { Users, History, Gift, MapPin, Phone, ShieldCheck, HeartPulse, Accessibility, Calendar, CheckCircle2, AlertTriangle, ArrowRight } from 'lucide-react';
+import {
+  Users,
+  History,
+  Gift,
+  Baby,
+  HeartHandshake,
+  Accessibility,
+  MapPin,
+  Printer,
+  ShieldCheck,
+  Building,
+  CheckCircle2,
+  Ticket,
+} from 'lucide-react';
 
 interface CitizenProfileModalProps {
   beneficiary?: Beneficiary | null;
@@ -14,6 +36,9 @@ interface CitizenProfileModalProps {
   allBeneficiaries?: Beneficiary[];
   allTokens?: QueueToken[];
   allAssistance?: AssistanceRecord[];
+  allPregnantMothers?: PregnantMotherRecord[];
+  allLandRecords?: LandRecord[];
+  allHouseholds?: HouseholdData[];
   lang: Language;
   onClose: () => void;
   onPrintCard?: () => void;
@@ -27,6 +52,9 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
   allBeneficiaries = [],
   allTokens = [],
   allAssistance = [],
+  allPregnantMothers = [],
+  allLandRecords = [],
+  allHouseholds = [],
   lang,
   onClose,
   onPrintCard,
@@ -37,9 +65,9 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
   const [qrSrc, setQrSrc] = useState<string>('');
 
   const barcodeVal = beneficiary?.barcode || beneficiary?.nic || token?.citizenNic || token?.tokenNumber || '';
-  const age = beneficiary ? calculateAge(beneficiary.dob) : null;
+  const age = beneficiary ? calculateAge(beneficiary.dob, beneficiary.nic) : null;
 
-  // Active family unit members matching the same family code (Requirement 02 & 03)
+  // Active family unit members matching the same family code
   const familyCode = beneficiary?.familyCode || token?.familyCode;
   const familyMembers = React.useMemo(() => {
     if (!familyCode) return [];
@@ -51,7 +79,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
   const pastCitizenTokens = React.useMemo(() => {
     if (!citizenNic) return [];
     return allTokens.filter(
-      (tok) => tok.citizenNic.toLowerCase().trim() === citizenNic.toLowerCase().trim()
+      (tok) => (tok.citizenNic || '').toLowerCase().trim() === citizenNic.toLowerCase().trim()
     );
   }, [citizenNic, allTokens]);
 
@@ -59,11 +87,41 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
   const pastCitizenAid = React.useMemo(() => {
     if (!citizenNic && !familyCode) return [];
     return allAssistance.filter((aid) => {
-      const matchNic = citizenNic && aid.beneficiaryNic.toLowerCase().trim() === citizenNic.toLowerCase().trim();
+      const matchNic = citizenNic && (aid.beneficiaryNic || '').toLowerCase().trim() === citizenNic.toLowerCase().trim();
       const matchFam = familyCode && aid.familyCode && aid.familyCode.toLowerCase().trim() === familyCode.toLowerCase().trim();
       return matchNic || matchFam;
     });
   }, [citizenNic, familyCode, allAssistance]);
+
+  // Maternity & Nutrition Stamp Records (matching Universal Citizen Search)
+  const citizenMaternity = React.useMemo(() => {
+    if (!citizenNic && !familyCode) return [];
+    return allPregnantMothers.filter((m) => {
+      const matchNic = citizenNic && (m.nic || '').toLowerCase().trim() === citizenNic.toLowerCase().trim();
+      const matchFam = familyCode && m.familyCode && m.familyCode.toLowerCase().trim() === familyCode.toLowerCase().trim();
+      return matchNic || matchFam;
+    });
+  }, [citizenNic, familyCode, allPregnantMothers]);
+
+  // Land Records matching citizen NIC or family
+  const citizenLand = React.useMemo(() => {
+    if (!citizenNic && !familyCode) return [];
+    return allLandRecords.filter((l) => {
+      const matchNic = citizenNic && (l.ownerNic || '').toLowerCase().trim() === citizenNic.toLowerCase().trim();
+      const matchFam = familyCode && l.familyCode && l.familyCode.toLowerCase().trim() === familyCode.toLowerCase().trim();
+      return matchNic || matchFam;
+    });
+  }, [citizenNic, familyCode, allLandRecords]);
+
+  // Household & Poverty Score
+  const citizenHousehold = React.useMemo(() => {
+    if (!familyCode) return null;
+    return allHouseholds.find((h) => h.familyCode === familyCode) || null;
+  }, [familyCode, allHouseholds]);
+
+  // Senior Citizen & Disability Welfare determination
+  const isElderlyCitizen = beneficiary ? (beneficiary.isElderly || (age !== null && age >= 60) || beneficiary.welfareScheme === 'ELDERLY') : false;
+  const isDisabilityCitizen = beneficiary ? (beneficiary.isPersonWithDisability || beneficiary.welfareScheme === 'DISABILITY' || beneficiary.chronicIllness === 'DISABILITY_PHYSICAL') : false;
 
   useEffect(() => {
     if (barcodeRef.current && barcodeVal) {
@@ -81,32 +139,53 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
     generateQrDataUrl(payload).then((url) => setQrSrc(url));
   }, [barcodeVal, beneficiary, token]);
 
+  const handlePrintDossier = () => {
+    window.print();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-4 sm:p-6 border border-slate-200 my-4 max-h-[92vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-4 sm:p-6 border border-slate-200 my-4 max-h-[92vh] overflow-y-auto">
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-200">
           <div className="flex items-center gap-2.5">
             <VaharaiLogo size={36} className="w-9 h-9" />
             <div>
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
-                {t.citizenProfileModalTitle}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                  {lang === 'ta' ? 'ஒருங்கிணைந்த பிரஜை முழு விபரம் (360° Dossier)' : 'Universal Citizen 360° Dossier'}
+                </span>
+                {token && (
+                  <span className="font-mono text-xs bg-slate-900 text-emerald-400 px-2 py-0.5 rounded font-bold">
+                    {token.tokenNumber}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight mt-0.5">
+                {beneficiary?.nameTa || token?.citizenName || 'பிரஜை விபரம்'}
               </h3>
-              <p className="text-[11px] text-slate-500">
-                {token ? `டோக்கன்: ${token.tokenNumber} · கவுண்டர்: ${token.counterNo}` : 'பிரஜை உத்தியோகபூர்வ முழு விபரம்'}
-              </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 text-slate-400 hover:text-slate-700 text-lg leading-none"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrintDossier}
+              className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+              title="Print full dossier"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'அச்சிடுக' : 'Print'}</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        {/* Citizen Card Dossier */}
-        <div className="my-4 space-y-4">
+        {/* Complete Dossier Content */}
+        <div id="printable-citizen-dossier" className="my-4 space-y-4">
           {/* Identity Header Strip */}
           <div className="p-4 bg-gradient-to-r from-emerald-50 via-slate-50 to-amber-50/40 border border-emerald-200 rounded-xl flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
@@ -114,7 +193,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                 {beneficiary?.gender === 'FEMALE' ? '👩' : '👨'}
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-base font-bold text-slate-900 leading-tight">
                     {beneficiary?.nameTa || token?.citizenName || 'பிரஜை'}
                   </h4>
@@ -134,7 +213,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                 </div>
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   <span className="font-mono text-xs font-bold text-emerald-950 bg-white px-2 py-0.5 rounded border border-emerald-200">
-                    {beneficiary?.nic || token?.citizenNic || 'No NIC'}
+                    NIC: {beneficiary?.nic || token?.citizenNic || 'No NIC'}
                   </span>
                   {beneficiary?.isProvisionalNic && (
                     <span className="text-[9px] bg-amber-200 text-amber-900 font-bold px-1.5 py-0.2 rounded">
@@ -165,7 +244,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
             </div>
           </div>
 
-          {/* Token Visit Info (யாரை பார்க்க வேண்டும்) */}
+          {/* Active Token Visit Info */}
           {token && (
             <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1">
               <div className="flex items-center justify-between">
@@ -173,25 +252,31 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                   <span>📌</span>
                   <span>{t.officerToMeet}:</span>
                 </span>
-                <span className="font-bold font-mono text-amber-900 bg-white px-2 py-0.5 rounded border border-amber-200">
+                <span className="font-bold font-mono text-amber-900 bg-white px-2.5 py-0.5 rounded border border-amber-200">
                   {token.officerToMeet || 'அட்மின் 1 (Admin 1)'}
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] text-slate-600">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px] text-slate-600">
                 <div>
                   <span>வரிசை எண்:</span> <strong className="font-mono text-slate-900">{token.tokenNumber}</strong>
                 </div>
                 <div>
                   <span>கவுண்டர்:</span> <strong className="font-mono text-slate-900">Counter {token.counterNo}</strong>
                 </div>
+                <div>
+                  <span>சேவை:</span> <strong className="text-slate-900">{token.counterName || token.serviceType}</strong>
+                </div>
+                <div>
+                  <span>நிலை:</span> <strong className="text-emerald-800">{token.status}</strong>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Citizen Details Grid */}
+          {/* SECTION 1: Demographic Profile */}
           {beneficiary ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
                 <div className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">
                   இருப்பிட & பிரிவு விபரங்கள் / Residential
                 </div>
@@ -214,7 +299,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                 </div>
               </div>
 
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
                 <div className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">
                   நலன்புரி & விசேட தகைமைகள் / Welfare & Schemes
                 </div>
@@ -251,17 +336,6 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                   </span>
                 </div>
                 <div className="pt-1 border-t border-slate-200 space-y-1">
-                  {beneficiary.isPregnantMother && (
-                    <div className="text-pink-700 font-bold text-[11px]">
-                      🤰 கர்ப்பிணித் தாய் ({beneficiary.pregnancyStageMonths || 6}வது மாதம்)
-                    </div>
-                  )}
-                  {beneficiary.isPersonWithDisability && (
-                    <div className="text-blue-700 font-bold text-[11px]">
-                      ♿ மாற்றுத்திறனாளி: {beneficiary.disabilityNature || beneficiary.disabilityType || 'உடல் ஊனம்'}
-                      {beneficiary.disabilityCause && ` (${beneficiary.disabilityCause})`}
-                    </div>
-                  )}
                   {beneficiary.isWomanHeadedHousehold && (
                     <div className="text-purple-700 font-bold text-[11px]">
                       👩‍👧 பெண் தலைமைத்துவ குடும்பம்
@@ -281,7 +355,161 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
             </div>
           )}
 
-          {/* Requirement 03: Family QR Unit & All Linked Family Members */}
+          {/* SECTION 2: Specialized Welfare Portals Status (Maternity, Elderly, Disability) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Maternity & Nutrition Stamp Status */}
+            <div className={`p-3.5 rounded-xl border ${
+              citizenMaternity.length > 0 ? 'bg-pink-50/70 border-pink-200' : 'bg-slate-50/70 border-slate-200'
+            }`}>
+              <div className="flex items-center gap-1.5 mb-2 font-bold text-xs text-pink-900">
+                <Baby className="w-4 h-4 text-pink-700" />
+                <span>கர்ப்பிணித் தாய் & போசணை முத்திரை</span>
+              </div>
+              {citizenMaternity.length > 0 ? (
+                <div className="space-y-2 text-xs">
+                  {citizenMaternity.map((m) => {
+                    const collected = m.monthlyCollections ? m.monthlyCollections.filter((c) => c.collected).length : 0;
+                    return (
+                      <div key={m.id} className="p-2 bg-white rounded-lg border border-pink-200 space-y-1">
+                        <div className="flex justify-between font-semibold">
+                          <span>முத்திரை இலக்கம்:</span>
+                          <strong className="font-mono text-pink-700">#{m.stampNumber || 'Pending'}</strong>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-slate-600">
+                          <span>பிரசவ முறை:</span>
+                          <span>{m.pregnancyNumber} வது குழந்தை</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-slate-600">
+                          <span>முன்னேற்றம்:</span>
+                          <strong className="font-mono text-emerald-800">{collected}/10 மாதங்கள்</strong>
+                        </div>
+                        <div className="text-[10px] text-slate-500 pt-0.5 border-t border-slate-100 font-mono">
+                          முடிவு: {m.expectedCompletionDate}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 mt-1">கர்ப்பிணித் தாய் பதிவுகள் இல்லை.</p>
+              )}
+            </div>
+
+            {/* Senior Citizen / Elderly Welfare Card */}
+            <div className={`p-3.5 rounded-xl border ${
+              isElderlyCitizen ? 'bg-amber-50/70 border-amber-200' : 'bg-slate-50/70 border-slate-200'
+            }`}>
+              <div className="flex items-center gap-1.5 mb-2 font-bold text-xs text-amber-900">
+                <HeartHandshake className="w-4 h-4 text-amber-700" />
+                <span>முதியோர் நலன்புரி விபரம்</span>
+              </div>
+              {isElderlyCitizen && beneficiary ? (
+                <div className="p-2 bg-white rounded-lg border border-amber-200 space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">கொடுப்பனவு நிலை:</span>
+                    <strong className="text-amber-900 font-bold">
+                      {beneficiary.elderlyAllowanceStatus === 'RECEIVING' ? 'கொடுப்பனவு பெறுகிறார்' : 'விண்ணப்பிக்கவில்லை'}
+                    </strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">வசிக்கும் நிலை:</span>
+                    <span>{beneficiary.elderlyLivingStatus === 'ALONE' ? 'தனியாக வசிப்பவர்' : 'குடும்பத்துடன்'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">இயங்குதிறன்:</span>
+                    <span>{beneficiary.elderlyMobilityStatus || 'சாதாரண நடை'}</span>
+                  </div>
+                  {beneficiary.elderlyCaretakerName && (
+                    <div className="text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
+                      பராமரிப்பாளர்: {beneficiary.elderlyCaretakerName}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 mt-1">சிரேஷ்ட பிரஜை விபரங்கள் இல்லை (வயது 60 க்குட்பட்டவர்).</p>
+              )}
+            </div>
+
+            {/* Disability Welfare Card */}
+            <div className={`p-3.5 rounded-xl border ${
+              isDisabilityCitizen ? 'bg-blue-50/70 border-blue-200' : 'bg-slate-50/70 border-slate-200'
+            }`}>
+              <div className="flex items-center gap-1.5 mb-2 font-bold text-xs text-blue-900">
+                <Accessibility className="w-4 h-4 text-blue-700" />
+                <span>மாற்றுத்திறனாளிகள் நலன்புரி</span>
+              </div>
+              {isDisabilityCitizen && beneficiary ? (
+                <div className="p-2 bg-white rounded-lg border border-blue-200 space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">குறைபாட்டின் வகை:</span>
+                    <strong className="text-blue-950">{beneficiary.disabilityNature || beneficiary.disabilityType || 'உடல் ஊனம்'}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">காரணம்:</span>
+                    <span>{beneficiary.disabilityCause || 'பிறப்பு / விபத்து'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">கொடுப்பனவு:</span>
+                    <span className="font-semibold text-emerald-800">
+                      {beneficiary.welfareScheme === 'DISABILITY' ? 'உதவித்தொகை பெறுகிறார்' : 'பரிசீலனையில்'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 mt-1">மாற்றுத்திறனாளி விபரங்கள் எதுவும் இல்லை.</p>
+              )}
+            </div>
+          </div>
+
+          {/* SECTION 3: Land Permits & Records */}
+          {citizenLand.length > 0 && (
+            <div className="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center justify-between font-bold text-emerald-950">
+                <div className="flex items-center gap-1.5">
+                  <Building className="w-4 h-4 text-emerald-700" />
+                  <span>காணி அனுமதிப்பத்திர பதிவுகள் (Land Permits / LDO Records: {citizenLand.length})</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {citizenLand.map((l) => (
+                  <div key={l.id} className="p-2 bg-white rounded-lg border border-emerald-200 space-y-1">
+                    <div className="flex justify-between font-bold">
+                      <span className="text-emerald-950">அனுமதிப்பத்திரம்: #{l.permitNo}</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-100 text-emerald-800 font-mono">
+                        {l.permitStatus}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600">
+                      துண்டு எண்: Lot {l.lotNo} · வரைபடம்: {l.planNo} · பரப்பு: {l.extent}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono">
+                      வகை: {l.landType} · வரி நிலை: {l.annualTaxStatus}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 4: Family Poverty Score & Household Info */}
+          {citizenHousehold && (
+            <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl flex items-center justify-between text-xs gap-3">
+              <div>
+                <span className="font-bold text-amber-950">100 புள்ளி வறுமை மதிப்பீடு (Poverty Score):</span>
+                <span className="font-mono font-bold text-amber-900 ml-1.5 text-sm">
+                  {citizenHousehold.score100 ?? 'N/A'}/100
+                </span>
+                <span className="text-[11px] text-slate-600 ml-2">
+                  முன்னுரிமை நிலை: <strong className="text-slate-900">{citizenHousehold.priorityRank || 'Normal'}</strong>
+                </span>
+              </div>
+              <span className="font-mono text-[11px] text-slate-500">
+                குடும்ப வகை: {citizenHousehold.commonAssets?.isSingleParent ? 'தனி பெற்றோர் (Single Parent)' : 'குடும்பம்'}
+              </span>
+            </div>
+          )}
+
+          {/* SECTION 5: Linked Family Members */}
           {familyCode && (
             <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
@@ -318,7 +546,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
                             </span>
                           </div>
                           <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                            NIC: {fm.nic} · {calculateAge(fm.dob)} வயது
+                            NIC: {fm.nic} · {calculateAge(fm.dob, fm.nic)} வயது
                           </div>
                         </div>
                         <div className="text-right flex flex-wrap gap-1 justify-end max-w-[180px]">
@@ -343,12 +571,12 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
             </div>
           )}
 
-          {/* Requirement 03: Complete DS Previous Tokens History */}
+          {/* SECTION 6: Past DS Office Visits & Queue Tokens */}
           <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
             <div className="flex items-center justify-between font-bold text-slate-800">
               <div className="flex items-center gap-1.5">
-                <History className="w-4 h-4 text-emerald-700" />
-                <span>பிரதேச செயலக வருகை வரலாறு (Past DS Office Visits: {pastCitizenTokens.length})</span>
+                <Ticket className="w-4 h-4 text-emerald-700" />
+                <span>பிரதேச செயலக வருகை & டோக்கன் வரலாறு (Past Visits: {pastCitizenTokens.length})</span>
               </div>
             </div>
 
@@ -377,7 +605,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
             )}
           </div>
 
-          {/* Requirement 03: Complete Relief Assistance History */}
+          {/* SECTION 7: Complete Relief Assistance History */}
           <div className="p-3.5 bg-purple-50/60 border border-purple-200 rounded-xl space-y-2 text-xs">
             <div className="flex items-center justify-between font-bold text-purple-950">
               <div className="flex items-center gap-1.5">
@@ -430,7 +658,7 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
           {onPrintCard && beneficiary && (
             <button
               onClick={onPrintCard}
-              className="py-1.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+              className="py-1.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
             >
               🪪 {t.printIdCard}
             </button>
@@ -438,14 +666,14 @@ export const CitizenProfileModal: React.FC<CitizenProfileModalProps> = ({
           {onPrintThermal && token && (
             <button
               onClick={onPrintThermal}
-              className="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+              className="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
             >
               🖨️ {t.printThermalReceipt}
             </button>
           )}
           <button
             onClick={onClose}
-            className="py-1.5 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+            className="py-1.5 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium cursor-pointer"
           >
             {t.close}
           </button>

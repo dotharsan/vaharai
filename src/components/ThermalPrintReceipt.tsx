@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { QueueToken } from '../types';
+import { QueueToken, Beneficiary, HouseholdData, PregnantMotherRecord } from '../types';
 import { renderBarcodeSvg } from '../utils/barcode';
 import { VaharaiLogo } from './VaharaiLogo';
 
@@ -10,6 +10,11 @@ interface ThermalPrintReceiptProps {
   serviceLabelEn: string;
   onClose?: () => void;
   autoPrint?: boolean;
+  beneficiary?: Beneficiary | null;
+  household?: HouseholdData | null;
+  pregnantMother?: PregnantMotherRecord | null;
+  landRecordsCount?: number;
+  pastAidCount?: number;
 }
 
 export const ThermalPrintReceipt: React.FC<ThermalPrintReceiptProps> = ({
@@ -19,6 +24,11 @@ export const ThermalPrintReceipt: React.FC<ThermalPrintReceiptProps> = ({
   serviceLabelEn,
   onClose,
   autoPrint = false,
+  beneficiary,
+  household,
+  pregnantMother,
+  landRecordsCount = 0,
+  pastAidCount = 0,
 }) => {
   const barcodeRef = useRef<SVGSVGElement | null>(null);
 
@@ -112,26 +122,79 @@ export const ThermalPrintReceipt: React.FC<ThermalPrintReceiptProps> = ({
             </div>
           </div>
 
-          {/* Citizen Details if provided */}
-          {(token.citizenName || token.citizenNic) && (
-            <div className="text-left bg-slate-50 border border-slate-200 p-1.5 rounded my-2 text-[10px]">
-              {token.citizenName && (
-                <div className="truncate">
-                  <span className="font-semibold">பெயர் / Name:</span> {token.citizenName}
+          {/* Citizen Details with 360° Welfare Profile Context */}
+          {(token.citizenName || token.citizenNic || beneficiary) && (() => {
+            const welfareTags: string[] = [];
+            if (beneficiary?.isElderly || beneficiary?.welfareScheme === 'ELDERLY') welfareTags.push('முதியோர் (Senior)');
+            if (pregnantMother || beneficiary?.isPregnantMother) welfareTags.push('கர்ப்பிணித் தாய் (Maternity)');
+            if (beneficiary?.isPersonWithDisability || beneficiary?.welfareScheme === 'DISABILITY') welfareTags.push('விசேட தேவை (Disability)');
+            if (beneficiary?.isSamurdhiBeneficiary || beneficiary?.welfareScheme === 'SAMURDHI') welfareTags.push('அஸ்வெசும / சமூர்த்தி');
+            if (beneficiary?.isWomanHeadedHousehold) welfareTags.push('பெண் தலைமை (WHH)');
+            const famCode = token.familyCode || beneficiary?.familyCode;
+
+            return (
+              <div className="text-left bg-slate-50 border border-slate-300 p-2 rounded my-2 text-[10px] space-y-0.5 leading-tight">
+                <div className="font-bold text-[10px] text-slate-800 border-b border-slate-200 pb-0.5 mb-1 flex items-center justify-between">
+                  <span>பிரஜை விபரம் & நலன்புரி</span>
+                  <span className="font-mono text-[9px] text-slate-500">360° PROFILE</span>
                 </div>
-              )}
-              {token.citizenNic && (
-                <div className="font-mono">
-                  <span className="font-semibold">NIC:</span> {token.citizenNic}
-                </div>
-              )}
-              {token.divisionCode && (
-                <div>
-                  <span className="font-semibold">பிரிவு / GN Div:</span> {token.divisionCode}
-                </div>
-              )}
-            </div>
-          )}
+                {(token.citizenName || beneficiary?.nameTa) && (
+                  <div className="truncate font-semibold text-slate-900">
+                    <span className="text-slate-600 font-normal">பெயர்:</span> {token.citizenName || beneficiary?.nameTa}
+                  </div>
+                )}
+                {(token.citizenNic || beneficiary?.nic) && (
+                  <div className="font-mono">
+                    <span className="text-slate-600 font-normal">NIC:</span> <strong className="text-slate-950">{token.citizenNic || beneficiary?.nic}</strong>
+                  </div>
+                )}
+                {famCode && (
+                  <div className="font-mono">
+                    <span className="text-slate-600 font-normal">குடும்ப எண்:</span> <strong>{famCode}</strong>
+                  </div>
+                )}
+                {(token.divisionCode || beneficiary?.divisionCode) && (
+                  <div>
+                    <span className="text-slate-600 font-normal">பிரிவு (GN):</span> {token.divisionCode || beneficiary?.divisionCode}
+                  </div>
+                )}
+                {beneficiary?.phone && (
+                  <div>
+                    <span className="text-slate-600 font-normal">தொலைபேசி:</span> {beneficiary.phone}
+                  </div>
+                )}
+
+                {/* Welfare Status Tags */}
+                {welfareTags.length > 0 && (
+                  <div className="pt-1 mt-1 border-t border-slate-200">
+                    <div className="text-[9px] text-slate-600 font-medium mb-0.5">நலன்புரி நிலை / Welfare:</div>
+                    <div className="flex flex-wrap gap-1">
+                      {welfareTags.map((tag, idx) => (
+                        <span key={idx} className="px-1.5 py-0.2 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded font-bold text-[8.5px]">
+                          ✓ {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Poverty Scoring, Aid, and Land History */}
+                {(household?.score100 !== undefined || pastAidCount > 0 || landRecordsCount > 0) && (
+                  <div className="pt-1 mt-1 border-t border-slate-200 text-[9px] text-slate-700 flex flex-wrap gap-x-2 gap-y-0.5">
+                    {household?.score100 !== undefined && (
+                      <span>வறுமைப் புள்ளி: <strong>{household.score100}/100</strong></span>
+                    )}
+                    {pastAidCount > 0 && (
+                      <span>| நிவாரணம்: <strong>{pastAidCount} முறை</strong></span>
+                    )}
+                    {landRecordsCount > 0 && (
+                      <span>| காணி: <strong>{landRecordsCount} பதிவுகள்</strong></span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Barcode for scanner */}
           <div className="flex flex-col items-center justify-center my-2">
