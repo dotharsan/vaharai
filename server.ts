@@ -3,9 +3,6 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import databaseHandler from './api/database.ts';
-import databaseStatusHandler from './api/database/status.ts';
-import driveFetchHandler from './api/drive/fetch.ts';
 
 dotenv.config();
 
@@ -13,14 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = Number(process.env.PORT) || 3000;
+const port = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
-
-// Central Database & Google Drive Proxy Endpoints
-app.all('/api/database/status', databaseStatusHandler);
-app.all('/api/database', databaseHandler);
-app.all('/api/drive/fetch', driveFetchHandler);
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -166,6 +158,6 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Vaharai DS Management System running on http://0.0.0.0:${port}`);
+app.listen(port, () => {
+  console.log(`Vaharai DS Management System running on http://localhost:${port}`);
 });

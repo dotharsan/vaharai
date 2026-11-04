@@ -260,49 +260,13 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   };
 
   // Designated Drive File Handlers
-  const handleDownloadMasterJson = () => {
-    try {
-      const snapshot = createDatabaseSnapshot();
-      const jsonStr = JSON.stringify(snapshot, null, 2);
-      const blob = new Blob([jsonStr], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vaharai_ds_master_database_${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setStatusMessage(
-        lang === 'ta'
-          ? `✅ முழுமையான தரவுத்தளம் JSON கோப்பாக வெற்றிகரமாக பதிவிறக்கப்பட்டது! (${snapshot.beneficiaries?.length || 0} பிரஜைகள், ${snapshot.tokens?.length || 0} டோக்கன்கள்)`
-          : `✅ Master database JSON downloaded successfully! (${snapshot.beneficiaries?.length || 0} citizens, ${snapshot.tokens?.length || 0} tokens)`
-      );
-      onAuditLog('DOWNLOAD_MASTER_JSON', `Downloaded full JSON master database (${snapshot.beneficiaries?.length || 0} records)`);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Download failed');
-    }
-  };
-
   const handleSaveToDesignatedFile = async () => {
-    if (!isConnected) {
-      setErrorMessage(
-        lang === 'ta'
-          ? '⚠️ உங்கள் கூகிள் கணக்கு இன்னும் இணைக்கப்படவில்லை. மேலே உள்ள "Connect Drive (பாப்-அப்)" அல்லது "முழு பக்க Redirect" பொத்தானை அழுத்தி கூகிள் கணக்கை இணைக்கவும். அல்லது "Master JSON பதிவிறக்கம்" மூலம் முழு தரவுத்தளத்தையும் இப்போதே சேமிக்கலாம்.'
-          : '⚠️ Google Drive is not connected yet. Please connect your Google account above first, or download the Master JSON directly.'
-      );
-      return;
-    }
     setIsLoading(true);
     setErrorMessage('');
     try {
       const snapshot = createDatabaseSnapshot();
       const res = await saveToDesignatedDriveFile(snapshot, designatedFileId);
-      setStatusMessage(
-        lang === 'ta'
-          ? `✅ குறிக்கப்பட்ட டிரைவ் கோப்பில் (${res.fileId}) அனைத்து தகவல்களும் (${snapshot.beneficiaries?.length || 0} பிரஜைகள், ${snapshot.tokens?.length || 0} டோக்கன்கள்) வெற்றிகரமாக சேமிக்கப்பட்டன!`
-          : `✅ Successfully saved to designated Drive file (${res.fileId}) with ${snapshot.beneficiaries?.length || 0} citizens!`
-      );
+      setStatusMessage(lang === 'ta' ? `குறிக்கப்பட்ட டிரைவ் கோப்பில் (${res.fileId}) அனைத்து தகவல்களும் வெற்றிகரமாக சேமிக்கப்பட்டன!` : `Successfully saved to designated Drive file (${res.fileId})!`);
       onAuditLog('DRIVE_MASTER_SYNC', `Saved master database directly to Google Drive file: ${res.fileId}`);
       await fetchBackups();
     } catch (err: any) {
@@ -605,40 +569,19 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
           )}
         </div>
 
-        {/* Warning banner when not connected to Drive */}
-        {!isConnected && (
-          <div className="mt-3.5 p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">⚠️</span>
-              <p className="text-xs text-amber-900 leading-tight">
-                {lang === 'ta'
-                  ? 'கூகிள் டிரைவ் நேரடி ஒத்திசைவு (Auto-Sync) செயற்பட, மேலே உள்ள "Connect Drive" பொத்தானை அழுத்தவும். உடனடியாக முழு தரவுத்தளத்தையும் பெற கீழே உள்ள "Master JSON பதிவிறக்கம்" பொத்தானைப் பயன்படுத்தலாம்.'
-                  : 'Connect your Google Drive account above for live sync, or download the full master database JSON instantly below.'}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleConnectGoogle}
-              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
-            >
-              {lang === 'ta' ? 'இப்போதே இணைக்கவும்' : 'Connect Now'}
-            </button>
-          </div>
-        )}
-
-        {/* 3 Primary Direct Action Buttons */}
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* 2 Primary Direct Action Buttons */}
+        <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
           <button
             type="button"
             onClick={handleSaveToDesignatedFile}
-            disabled={isLoading}
-            className="py-2.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+            disabled={isLoading || !isConnected}
+            className="flex-1 py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
           >
             <span className="text-base">📤</span>
             <span>
               {lang === 'ta'
-                ? 'டிரைவ் கோப்பில் சேமிக்கவும் (Push to Drive)'
-                : 'Save Local Data into Drive File'}
+                ? 'இந்த டிரைவ் கோப்பில் தகவல்களை இப்போதே சேமிக்கவும் (Push to Drive File)'
+                : 'Save Local Data into this Drive File Now'}
             </span>
           </button>
 
@@ -646,26 +589,13 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
             type="button"
             onClick={handlePullFromDesignatedFile}
             disabled={isLoading}
-            className="py-2.5 px-3 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+            className="flex-1 py-2.5 px-4 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
           >
             <span className="text-base">📥</span>
             <span>
               {lang === 'ta'
-                ? 'டிரைவிலிருந்து மீட்டெடுக்க (Pull from Drive)'
-                : 'Pull Latest from Drive File'}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadMasterJson}
-            className="py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
-          >
-            <span className="text-base">💾</span>
-            <span>
-              {lang === 'ta'
-                ? 'Master JSON பதிவிறக்கம் (Download JSON)'
-                : 'Download Master Database JSON'}
+                ? 'இந்த டிரைவ் கோப்பிலிருந்து தகவல்களை மீட்டெடுக்கவும் (Pull from Drive File)'
+                : 'Load / Pull Latest from this Drive File'}
             </span>
           </button>
         </div>

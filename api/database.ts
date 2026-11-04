@@ -70,15 +70,24 @@ export default function handler(req: any, res: any) {
       snapshot.lastServerSync = new Date().toISOString();
       inMemorySnapshot = snapshot;
 
-      // Try persisting to disk if writable (writes to runtime data folder, avoiding src reloads)
+      // Try persisting to disk if writable (writes to both data and src/data)
       try {
         const cwd = process.cwd();
-        const dataPath = path.join(cwd, 'data', 'central_database.json');
-        const dir = path.dirname(dataPath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
+        const targets = [
+          path.join(cwd, 'data', 'central_database.json'),
+          path.join(cwd, 'src', 'data', 'central_database.json'),
+        ];
+        for (const dataPath of targets) {
+          try {
+            const dir = path.dirname(dataPath);
+            if (!fs.existsSync(dir)) {
+              fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(dataPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+          } catch (writeErr) {
+            console.warn(`Could not write to ${dataPath}:`, writeErr);
+          }
         }
-        fs.writeFileSync(dataPath, JSON.stringify(snapshot, null, 2), 'utf-8');
       } catch (err) {
         console.warn('Central database disk write error:', err);
       }

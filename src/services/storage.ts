@@ -652,18 +652,17 @@ export const loadBeneficiaries = (): Beneficiary[] => {
 export const saveBeneficiaries = (items: Beneficiary[], trackDeletions: boolean = true) => {
   if (trackDeletions) {
     const prev = getStoredData<Beneficiary[]>(STORAGE_KEYS.BENEFICIARIES, []);
-    const newIds = new Set(items.map((b) => b.id).filter(Boolean));
+    const newIds = new Set(items.map((b) => b.id));
     const newNics = new Set(items.map((b) => b.nic).filter(Boolean));
     for (const p of prev) {
-      const hasId = p.id ? newIds.has(p.id) : false;
-      const hasNic = p.nic ? newNics.has(p.nic) : false;
-      // Only mark deleted if citizen is completely removed by both id and nic
-      if (!hasId && !hasNic) {
+      const idMissing = p.id && !newIds.has(p.id);
+      const nicMissing = p.nic && !newNics.has(p.nic);
+      if (idMissing || nicMissing) {
         recordDeletedId(p.id, p.nic);
       }
     }
   }
-  // Explicitly un-tombstone all saved citizens so active records are never filtered out
+  // Explicitly un-tombstone all saved citizens so re-uploaded/re-entered citizens and families succeed
   items.forEach((b) => {
     removeDeletedId(b.id, b.nic);
   });

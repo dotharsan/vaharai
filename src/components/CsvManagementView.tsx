@@ -162,7 +162,6 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
   const [parsedDuplicates, setParsedDuplicates] = useState<AssistanceRecord[]>([]);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [successBanner, setSuccessBanner] = useState<string>('');
-  const [showRegisteredRecords, setShowRegisteredRecords] = useState<boolean>(false);
 
   const handleCancelPreview = () => {
     if (fileInputRef.current) {
@@ -685,7 +684,6 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
     setFileContent('');
     setFileName('');
     setParseErrors([]);
-    setShowRegisteredRecords(false);
     setTimeout(() => setSuccessBanner(''), 6000);
 
     // Instant cloud synchronization push
@@ -1281,81 +1279,61 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
           {/* ========================================================================= */}
           {/* CURRENTLY REGISTERED RECORDS FOR THIS SECTION WITH SUPER ADMIN DELETION   */}
           {/* ========================================================================= */}
-          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+          <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <span className="p-1.5 bg-emerald-100 text-emerald-800 rounded-lg text-xs">📋</span>
                   <span>
                     {lang === 'ta'
-                      ? `இப்பிரிவில் உள்ள பதிவுகள் (${currentCategoryItems.length})`
-                      : `Stored Records in this Category (${currentCategoryItems.length})`}
+                      ? `தற்போது தரவுத்தளத்தில் உள்ள பதிவுகள் (${currentCategoryItems.length})`
+                      : `Currently Stored Records in this Category (${currentCategoryItems.length})`}
                   </span>
                 </h4>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {lang === 'ta'
-                    ? 'சிஎஸ்வி பதிவேற்றத்திற்குப் பின் பக்கம் தெளிவாக இருக்க இப்பதிவுகள் மறைக்கப்பட்டுள்ளன.'
-                    : 'Records are collapsed by default after CSV import to keep the screen uncluttered.'}
+                    ? 'சிஎஸ்வி அல்லது படிவங்கள் மூலம் ஏற்கனவே பதிவான விபரங்கள். தேவையற்ற பதிவுகளை இங்கிருந்தும் நிரந்தரமாக நீக்கலாம்.'
+                    : 'Records previously imported via CSV or added manually. Super Admins can permanently delete single or bulk entries.'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowRegisteredRecords((prev) => !prev)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors border ${
-                    showRegisteredRecords
-                      ? 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
-                      : 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
-                  }`}
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>
-                    {showRegisteredRecords
-                      ? (lang === 'ta' ? 'பதிவுகளை மறைக்க (Hide)' : 'Hide Records')
-                      : (lang === 'ta' ? `பதிவுகளைப் பார்க்க (${currentCategoryItems.length})` : `Show Records (${currentCategoryItems.length})`)}
-                  </span>
-                </button>
+              {canDelete && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {selectedRegisteredIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleBulkDeleteRegistered}
+                      className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>
+                        {lang === 'ta'
+                          ? `தெரிவுசெய்தவற்றை நீக்கு (${selectedRegisteredIds.length})`
+                          : `Delete Selected (${selectedRegisteredIds.length})`}
+                      </span>
+                    </button>
+                  )}
 
-                {showRegisteredRecords && canDelete && (
-                  <>
-                    {selectedRegisteredIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleBulkDeleteRegistered}
-                        className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>
-                          {lang === 'ta'
-                            ? `தெரிவுசெய்தவற்றை நீக்கு (${selectedRegisteredIds.length})`
-                            : `Delete Selected (${selectedRegisteredIds.length})`}
-                        </span>
-                      </button>
-                    )}
-
-                    {isSuperAdmin && currentCategoryItems.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={handleClearAllActiveCategory}
-                        className="px-3.5 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-800 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                        <span>{lang === 'ta' ? 'அனைத்தையும் அழி (Clear Category)' : 'Clear Entire Category'}</span>
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
+                  {isSuperAdmin && currentCategoryItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllActiveCategory}
+                      className="px-3.5 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-800 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>{lang === 'ta' ? 'அனைத்தையும் அழி (Clear Category)' : 'Clear Entire Category'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
-            {showRegisteredRecords && (
-              currentCategoryItems.length === 0 ? (
-                <div className="py-8 text-center text-slate-400 text-xs italic">
-                  {lang === 'ta' ? 'இப்பிரிவில் தற்போது எவ்வித பதிவுகளும் இல்லை.' : 'No records currently registered in this section.'}
-                </div>
-              ) : (
-                <div className="overflow-x-auto max-h-[460px] border border-slate-200 rounded-xl">
+            {currentCategoryItems.length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-xs italic">
+                {lang === 'ta' ? 'இப்பிரிவில் தற்போது எவ்வித பதிவுகளும் இல்லை.' : 'No records currently registered in this section.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[460px] border border-slate-200 rounded-xl">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-700 text-[11px] uppercase tracking-wider sticky top-0 border-b border-slate-200 z-10">
                     <tr>
@@ -1470,11 +1448,10 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                   </div>
                 )}
               </div>
-            )
-          )}
+            )}
+          </div>
         </div>
-      </div>
-    )}
+      )}
 
       {/* ========================================================================= */}
       {/* VIEW MODE 2: CONNECTED FAMILY UNITS VISUALIZER (தாய், தந்தை, மகன், மகள்)   */}

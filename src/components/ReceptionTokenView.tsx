@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { QueueToken, ServiceType, TokenStatus, Beneficiary, GNDivision, User, TokenForwardRecord, ServiceDefinition, AssistanceRecord, PregnantMotherRecord, LandRecord, HouseholdData } from '../types';
+import { QueueToken, ServiceType, TokenStatus, Beneficiary, GNDivision, User, TokenForwardRecord, ServiceDefinition, AssistanceRecord } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { ThermalPrintReceipt } from './ThermalPrintReceipt';
 import { VaharaiLogo } from './VaharaiLogo';
@@ -23,9 +23,6 @@ interface ReceptionTokenViewProps {
   divisions: GNDivision[];
   services?: ServiceDefinition[];
   assistanceRecords?: AssistanceRecord[];
-  pregnantMothers?: PregnantMotherRecord[];
-  landRecords?: LandRecord[];
-  households?: HouseholdData[];
   currentUser?: User;
   lang: Language;
   onUpdateTokens: (tokens: QueueToken[]) => void;
@@ -42,9 +39,6 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
   divisions,
   services,
   assistanceRecords,
-  pregnantMothers,
-  landRecords,
-  households,
   currentUser,
   lang,
   onUpdateTokens,
@@ -945,37 +939,13 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
                 className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-emerald-600 focus:outline-none bg-white"
               />
 
-              {/* Repeat Visitor Notification & Full 360 Dossier Access */}
+              {/* Repeat Visitor Notification (Requirement 03) */}
               {repeatVisitorNotice && (
-                <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-300 rounded text-[11px] text-emerald-950 font-semibold flex items-center justify-between gap-2 flex-wrap">
-                  <span className="flex-1">{repeatVisitorNotice}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const found = beneficiaries.find((b) => b.nic.toUpperCase() === citizenNic.trim().toUpperCase());
-                      if (found) {
-                        setSelectedTokenForDetails({
-                          id: `TEMP-${Date.now()}`,
-                          tokenNumber: 'CURRENT',
-                          counterNo: 1,
-                          serviceType: selectedService,
-                          citizenName: found.nameTa || found.nameEn,
-                          citizenNic: found.nic,
-                          citizenPhone: found.phone,
-                          citizenAddress: found.address,
-                          familyCode: found.familyCode,
-                          divisionCode: found.divisionCode,
-                          issuedAt: new Date().toISOString(),
-                          status: 'WAITING',
-                          officerToMeet: officerToMeet,
-                          barcode: 'CURRENT',
-                        });
-                      }
-                    }}
-                    className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded text-[10px] font-bold transition-colors cursor-pointer shrink-0 shadow-2xs"
-                  >
-                    🔍 {lang === 'ta' ? 'முழு விபரம் காண்க (360° Dossier)' : 'View 360° Dossier'}
-                  </button>
+                <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-300 rounded text-[11px] text-emerald-950 font-semibold flex items-center justify-between">
+                  <span>{repeatVisitorNotice}</span>
+                  <span className="text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded font-mono font-bold">
+                    2ND VISIT AUTO-FILLED
+                  </span>
                 </div>
               )}
             </div>
@@ -1786,9 +1756,6 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
           allBeneficiaries={beneficiaries}
           allTokens={tokens}
           allAssistance={assistanceRecords || []}
-          allPregnantMothers={pregnantMothers || []}
-          allLandRecords={landRecords || []}
-          allHouseholds={households || []}
           lang={lang}
           onClose={() => setSelectedTokenForDetails(null)}
           onPrintCard={matchedBeneficiary ? () => setSelectedBeneficiaryForCard(matchedBeneficiary) : undefined}
@@ -1952,30 +1919,16 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
       )}
 
       {/* Thermal Receipt Modal Preview & Auto-Print with Feedback Tear-Off Slip */}
-      {activeReceiptToken && (() => {
-        const matchedBen = getBeneficiaryForToken(activeReceiptToken);
-        const famCode = activeReceiptToken.familyCode || matchedBen?.familyCode;
-        const matchedHouse = famCode && households ? households.find((h) => h.familyCode === famCode) : null;
-        const matchedPreg = activeReceiptToken.citizenNic && pregnantMothers ? pregnantMothers.find((m) => m.nic?.toLowerCase() === activeReceiptToken.citizenNic?.toLowerCase()) : null;
-        const landCount = activeReceiptToken.citizenNic && landRecords ? landRecords.filter((l) => l.ownerNic?.toLowerCase() === activeReceiptToken.citizenNic?.toLowerCase()).length : 0;
-        const aidCount = activeReceiptToken.citizenNic && assistanceRecords ? assistanceRecords.filter((a) => a.beneficiaryNic?.toLowerCase() === activeReceiptToken.citizenNic?.toLowerCase()).length : 0;
-
-        return (
-          <ThermalPrintReceipt
-            token={activeReceiptToken}
-            waitingCount={waitingTokens.filter((w) => w.id !== activeReceiptToken.id).length}
-            serviceLabelTa={getServicePrefix(activeReceiptToken.serviceType).labelTa}
-            serviceLabelEn={getServicePrefix(activeReceiptToken.serviceType).labelEn}
-            onClose={() => setActiveReceiptToken(null)}
-            autoPrint={false}
-            beneficiary={matchedBen}
-            household={matchedHouse}
-            pregnantMother={matchedPreg}
-            landRecordsCount={landCount}
-            pastAidCount={aidCount}
-          />
-        );
-      })()}
+      {activeReceiptToken && (
+        <ThermalPrintReceipt
+          token={activeReceiptToken}
+          waitingCount={waitingTokens.filter((w) => w.id !== activeReceiptToken.id).length}
+          serviceLabelTa={getServicePrefix(activeReceiptToken.serviceType).labelTa}
+          serviceLabelEn={getServicePrefix(activeReceiptToken.serviceType).labelEn}
+          onClose={() => setActiveReceiptToken(null)}
+          autoPrint={false}
+        />
+      )}
 
       {/* Office Blueprint Layout Modal (Requirement 01: 33 Counters Map) */}
       <OfficeLayoutModal
