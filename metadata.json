@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Koralaipattu North Vaharai DS Management System",
+  "description": "Bilingual Database and Public Service System for Koralaipattu North Vaharai Divisional Secretariat with RBAC, Barcode, Thermal Printer Tokens, and Google Drive Backup.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
