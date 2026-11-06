@@ -1,7 +1,7 @@
 import React from 'react';
-import { Beneficiary, QueueToken, GNDivision, User, SystemAuditLog } from '../types';
+import { Beneficiary, QueueToken, GNDivision, User, SystemAuditLog, BATTICALOA_DS_DIVISIONS } from '../types';
 import { Language, translations } from '../translations/i18n';
-import { calculateAge } from '../services/storage';
+import { calculateAge, getDsDivisionById } from '../services/storage';
 
 interface DashboardViewProps {
   beneficiaries: Beneficiary[];
@@ -12,6 +12,7 @@ interface DashboardViewProps {
   currentUser: User;
   lang: Language;
   onNavigate: (tab: string) => void;
+  selectedDsDivisionId?: string;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -23,8 +24,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
   lang,
   onNavigate,
+  selectedDsDivisionId,
 }) => {
   const t = translations[lang];
+
+  // Dynamic DS Division resolution
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
+  const effectiveDsId = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' ? selectedDsDivisionId : null)
+    : (currentUser.dsDivisionId || 'DS_VAHARAI');
+
+  const currentDs = effectiveDsId ? getDsDivisionById(effectiveDsId) : null;
+
+  const dashboardTitle = isDistrictAdmin
+    ? (currentDs
+        ? (lang === 'ta' ? `${currentDs.nameTa} பிரதேச செயலகம்` : `${currentDs.nameEn} Divisional Secretariat`)
+        : (lang === 'ta' ? 'மட்டக்களப்பு மாவட்ட செயலகம்' : 'Batticaloa District Secretariat'))
+    : (currentDs
+        ? (lang === 'ta' ? `${currentDs.nameTa} பிரதேச செயலகம்` : `${currentDs.nameEn} Divisional Secretariat`)
+        : (lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'));
+
+  const dashboardSubtitle = isDistrictAdmin
+    ? (currentDs
+        ? (lang === 'ta' ? `மட்டக்களப்பு மாவட்டம் · ${currentDs.allocatedGnCount} கிராம அலுவலர் பிரிவுகள் · மேற்பார்வை நிலைப்பலகை` : `Batticaloa District · ${currentDs.allocatedGnCount} GN Divisions · Oversight Dashboard`)
+        : (lang === 'ta' ? '14 பிரதேச செயலகங்கள் மற்றும் 345 கிராம அலுவலர் பிரிவுகளின் தலைமை நிலைப்பலகை' : 'Apex District Administration for 14 Secretariats & 345 GN Divisions'))
+    : (currentDs
+        ? (lang === 'ta' ? `மட்டக்களப்பு மாவட்டம் · ${currentDs.allocatedGnCount} கிராம அலுவலர் பிரிவுகள்` : `Batticaloa District · ${currentDs.allocatedGnCount} GN Divisions`)
+        : t.appSubTitle);
 
   // If GN Officer, filter data relevant to their division
   const isGN = currentUser.role === 'GRAMANIILATHARI';
@@ -56,10 +82,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {lang === 'ta' ? 'அதிகாரப்பூர்வ நிர்வாக தளம்' : 'Official Administration Portal'}
           </div>
           <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            {t.appTitle}
+            {dashboardTitle}
           </h1>
           <p className="text-xs text-emerald-100 mt-1 leading-relaxed">
-            {t.appSubTitle}
+            {dashboardSubtitle}
           </p>
 
           <div className="flex items-center gap-2.5 mt-4 flex-wrap text-xs">
@@ -90,7 +116,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {totalCitizens}
           </div>
           <div className="mt-0.5 text-[10px] text-slate-400">
-            {isGN ? `GN Div ${divisionCode}` : 'All 16 Divs'}
+            {isGN ? `GN Div ${divisionCode}` : (lang === 'ta' ? `${divisions.length} கிராம பிரிவுகள்` : `${divisions.length} GN Divs`)}
           </div>
         </div>
 
@@ -224,9 +250,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
           <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
             <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              {lang === 'ta' ? 'வாகரை 16 கிராம அலுவலர் பிரிவுகள்' : '16 GN Divisions of Vaharai'}
+              {lang === 'ta'
+                ? `${currentDs ? currentDs.nameTa : 'பிரதேச செயலக'} கிராம அலுவலர் பிரிவுகள் (${divisions.length})`
+                : `${divisions.length} GN Divisions (${currentDs ? currentDs.nameEn : 'DS Division'})`}
             </h3>
-            <span className="text-[11px] text-slate-500 font-mono">16 Divisions</span>
+            <span className="text-[11px] text-slate-500 font-mono">{divisions.length} Divisions</span>
           </div>
 
           <div className="w-full overflow-x-auto max-h-80 overflow-y-auto">

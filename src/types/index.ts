@@ -1,5 +1,6 @@
 export type Role = 
-  | 'SUPERADMIN' 
+  | 'DISTRICT_ADMIN' // தலைமை அட்மின் - மட்டக்களப்பு மாவட்ட செயலகம் (Batticaloa District Master Admin)
+  | 'SUPERADMIN' // சுப்பர் அட்மின் - பிரதேச செயலாளர் (Divisional Secretariat Super Admin)
   | 'ADMIN 1' 
   | 'ADMIN 2' 
   | 'GRAMANIILATHARI' 
@@ -16,22 +17,226 @@ export type Role =
 
 export type UserRole = Role;
 
+// 14 Divisional Secretariats of Batticaloa District (மட்டக்களப்பு மாவட்டத்தின் 14 பிரதேச செயலகப் பிரிவுகள்)
+export interface DSDivision {
+  id: string; // e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH", etc.
+  code: string; // "01" to "14"
+  nameTa: string; // e.g. "மண்முனை வடக்கு (மட்டக்களப்பு)"
+  nameEn: string; // e.g. "Manmunai North (Batticaloa Town)"
+  allocatedGnCount: number; // Official GN Division allocation from District Gazette (e.g. 48, 39, 18, 16...)
+  superAdminId: string; // Unique User ID of the Super Admin for this DS
+  superAdminNameTa: string;
+  superAdminNameEn: string;
+  defaultPassword?: string;
+  headquartersTa?: string;
+  headquartersEn?: string;
+}
+
+export const BATTICALOA_DS_DIVISIONS: DSDivision[] = [
+  {
+    id: 'DS_MANMUNAI_NORTH',
+    code: '01',
+    nameTa: 'மண்முனை வடக்கு (மட்டக்களப்பு)',
+    nameEn: 'Manmunai North (Batticaloa Town)',
+    allocatedGnCount: 48,
+    superAdminId: 'ds_manmunainorth',
+    superAdminNameTa: 'பிரதேச செயலாளர் - மண்முனை வடக்கு',
+    superAdminNameEn: 'Divisional Secretary - Manmunai North',
+    defaultPassword: 'admin123',
+    headquartersTa: 'மட்டக்களப்பு நகரம்',
+    headquartersEn: 'Batticaloa Town',
+  },
+  {
+    id: 'DS_ERAVUR_PATTU',
+    code: '02',
+    nameTa: 'ஏறாவூர்ப்பற்று (செங்கலடி)',
+    nameEn: 'Eravur Pattu (Chenkalady)',
+    allocatedGnCount: 39,
+    superAdminId: 'ds_eravurpattu',
+    superAdminNameTa: 'பிரதேச செயலாளர் - ஏறாவூர்ப்பற்று',
+    superAdminNameEn: 'Divisional Secretary - Eravur Pattu',
+    defaultPassword: 'admin123',
+    headquartersTa: 'செங்கலடி',
+    headquartersEn: 'Chenkalady',
+  },
+  {
+    id: 'DS_KORALAI_PATTU_SOUTH',
+    code: '03',
+    nameTa: 'கோறளைப்பற்று தெற்கு (கிரான்)',
+    nameEn: 'Koralaipattu South (Kiran)',
+    allocatedGnCount: 18,
+    superAdminId: 'ds_koralaisouth',
+    superAdminNameTa: 'பிரதேச செயலாளர் - கோறளைப்பற்று தெற்கு',
+    superAdminNameEn: 'Divisional Secretary - Koralaipattu South',
+    defaultPassword: 'admin123',
+    headquartersTa: 'கிரான்',
+    headquartersEn: 'Kiran',
+  },
+  {
+    id: 'DS_KORALAI_PATTU',
+    code: '04',
+    nameTa: 'கோறளைப்பற்று (வாழைச்சேனை)',
+    nameEn: 'Koralaipattu (Valaichchenai)',
+    allocatedGnCount: 12,
+    superAdminId: 'ds_koralai',
+    superAdminNameTa: 'பிரதேச செயலாளர் - வாழைச்சேனை',
+    superAdminNameEn: 'Divisional Secretary - Koralaipattu Valaichchenai',
+    defaultPassword: 'admin123',
+    headquartersTa: 'வாழைச்சேனை',
+    headquartersEn: 'Valaichchenai',
+  },
+  {
+    id: 'DS_KORALAI_PATTU_CENTRAL',
+    code: '05',
+    nameTa: 'கோறளைப்பற்று மத்தி (ஓட்டமாவடி)',
+    nameEn: 'Koralaipattu Central (Oddamavadi)',
+    allocatedGnCount: 8,
+    superAdminId: 'ds_koralaicentral',
+    superAdminNameTa: 'பிரதேச செயலாளர் - கோறளைப்பற்று மத்தி',
+    superAdminNameEn: 'Divisional Secretary - Koralaipattu Central',
+    defaultPassword: 'admin123',
+    headquartersTa: 'ஓட்டமாவடி',
+    headquartersEn: 'Oddamavadi',
+  },
+  {
+    id: 'DS_KORALAI_PATTU_WEST',
+    code: '06',
+    nameTa: 'கோறளைப்பற்று மேற்கு',
+    nameEn: 'Koralaipattu West',
+    allocatedGnCount: 8,
+    superAdminId: 'ds_koralaiwest',
+    superAdminNameTa: 'பிரதேச செயலாளர் - கோறளைப்பற்று மேற்கு',
+    superAdminNameEn: 'Divisional Secretary - Koralaipattu West',
+    defaultPassword: 'admin123',
+    headquartersTa: 'கோறளைப்பற்று மேற்கு',
+    headquartersEn: 'Koralaipattu West',
+  },
+  {
+    id: 'DS_VAHARAI',
+    code: '07',
+    nameTa: 'கோறளைப்பற்று வடக்கு (வாகரை)',
+    nameEn: 'Koralaipattu North (Vaharai)',
+    allocatedGnCount: 16,
+    superAdminId: '93008148555',
+    superAdminNameTa: 'பிரதேச செயலாளர் - கோறளைப்பற்று வடக்கு (வாகரை)',
+    superAdminNameEn: 'Divisional Secretary - Koralaipattu North (Vaharai)',
+    defaultPassword: '19930108',
+    headquartersTa: 'வாகரை',
+    headquartersEn: 'Vaharai',
+  },
+  {
+    id: 'DS_ERAVUR_TOWN',
+    code: '08',
+    nameTa: 'ஏறாவூர் நகர்',
+    nameEn: 'Eravur Town',
+    allocatedGnCount: 15,
+    superAdminId: 'ds_eravurtown',
+    superAdminNameTa: 'பிரதேச செயலாளர் - ஏறாவூர் நகர்',
+    superAdminNameEn: 'Divisional Secretary - Eravur Town',
+    defaultPassword: 'admin123',
+    headquartersTa: 'ஏறாவூர்',
+    headquartersEn: 'Eravur',
+  },
+  {
+    id: 'DS_MANMUNAI_WEST',
+    code: '09',
+    nameTa: 'மண்முனை மேற்கு (வவுணதீவு)',
+    nameEn: 'Manmunai West (Vavunatheevu)',
+    allocatedGnCount: 24,
+    superAdminId: 'ds_manmunaiwest',
+    superAdminNameTa: 'பிரதேச செயலாளர் - மண்முனை மேற்கு',
+    superAdminNameEn: 'Divisional Secretary - Manmunai West',
+    defaultPassword: 'admin123',
+    headquartersTa: 'வவுணதீவு',
+    headquartersEn: 'Vavunatheevu',
+  },
+  {
+    id: 'DS_KATTANKUDY',
+    code: '10',
+    nameTa: 'காத்தான்குடி',
+    nameEn: 'Kattankudy',
+    allocatedGnCount: 18,
+    superAdminId: 'ds_kattankudy',
+    superAdminNameTa: 'பிரதேச செயலாளர் - காத்தான்குடி',
+    superAdminNameEn: 'Divisional Secretary - Kattankudy',
+    defaultPassword: 'admin123',
+    headquartersTa: 'காத்தான்குடி',
+    headquartersEn: 'Kattankudy',
+  },
+  {
+    id: 'DS_MANMUNAI_PATTU',
+    code: '11',
+    nameTa: 'மண்முனை பற்று (ஆரையம்பதி)',
+    nameEn: 'Manmunai Pattu (Arayampathy)',
+    allocatedGnCount: 27,
+    superAdminId: 'ds_manmunaipattu',
+    superAdminNameTa: 'பிரதேச செயலாளர் - மண்முனை பற்று',
+    superAdminNameEn: 'Divisional Secretary - Manmunai Pattu',
+    defaultPassword: 'admin123',
+    headquartersTa: 'ஆரையம்பதி',
+    headquartersEn: 'Arayampathy',
+  },
+  {
+    id: 'DS_MANMUNAI_SOUTH_WEST',
+    code: '12',
+    nameTa: 'மண்முனை தென்மேற்கு (பட்டிப்பளை)',
+    nameEn: 'Manmunai South West (Pattipalai)',
+    allocatedGnCount: 24,
+    superAdminId: 'ds_manmunaisouthwest',
+    superAdminNameTa: 'பிரதேச செயலாளர் - மண்முனை தென்மேற்கு',
+    superAdminNameEn: 'Divisional Secretary - Manmunai South West',
+    defaultPassword: 'admin123',
+    headquartersTa: 'பட்டிப்பளை',
+    headquartersEn: 'Pattipalai',
+  },
+  {
+    id: 'DS_MANMUNAI_SOUTH_ERUVIL',
+    code: '13',
+    nameTa: 'மண்முனை தெற்கு & எருவில்பற்று (களுவாஞ்சிகுடி)',
+    nameEn: 'Manmunai South & Eruvil Pattu (Kaluwanchikudy)',
+    allocatedGnCount: 45,
+    superAdminId: 'ds_manmunaiseruvil',
+    superAdminNameTa: 'பிரதேச செயலாளர் - களுவாஞ்சிகுடி',
+    superAdminNameEn: 'Divisional Secretary - Kaluwanchikudy',
+    defaultPassword: 'admin123',
+    headquartersTa: 'களுவாஞ்சிகுடி',
+    headquartersEn: 'Kaluwanchikudy',
+  },
+  {
+    id: 'DS_PORATIVU_PATTU',
+    code: '14',
+    nameTa: 'போரதீவுப்பற்று (வெல்லாவெளி)',
+    nameEn: 'Porativu Pattu (Vellavely)',
+    allocatedGnCount: 43,
+    superAdminId: 'ds_porativupattu',
+    superAdminNameTa: 'பிரதேச செயலாளர் - போரதீவுப்பற்று',
+    superAdminNameEn: 'Divisional Secretary - Porativu Pattu',
+    defaultPassword: 'admin123',
+    headquartersTa: 'வெல்லாவெளி',
+    headquartersEn: 'Vellavely',
+  },
+];
+
 export interface User {
-  id: string; // e.g. "123", "456", "457", "789", "1112", "555", "999", "601", "602", "603", "604"
+  id: string; // e.g. "123", "456", "93008148555", "dist_admin", etc.
   password: string; // Unique password
   name: string;
   role: Role;
   division?: string; // GN Division code or "ALL"
+  dsDivisionId?: string; // Linked Divisional Secretariat (e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH", or "DISTRICT_HQ" for District Master Admin)
+  createdBySuperAdminId?: string; // The Super Admin who created this staff user (for strict tenant isolation)
   status: 'ACTIVE' | 'INACTIVE';
   createdAt: string;
   lastLogin?: string;
   email?: string;
+  phone?: string;
 }
 
 export interface GNDivision {
-  code: string; // e.g. "211", "211A", "212", etc.
+  code: string; // Unique GN Code (e.g. "211", "211A", "MN-01", "185B", etc.)
   nameTa: string; // e.g. "வாகரை வடக்கு"
   nameEn: string; // e.g. "Vaharai North"
+  dsDivisionId?: string; // Link to parent Divisional Secretariat (e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH")
   gnOfficerName?: string;
   contactNumber?: string;
   population?: number;
@@ -144,6 +349,7 @@ export interface Beneficiary {
   phone: string;
   address: string;
   divisionCode: string; // e.g. "211", "212A", etc. or "GENERAL"
+  dsDivisionId?: string; // Link to Divisional Secretariat (e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH")
   familyHead: boolean;
   householdNo: string;
   familyCode?: string; // Unified Family / Household Group ID (e.g. "FAM-211-042")
@@ -227,6 +433,7 @@ export interface QueueToken {
   citizenAddress?: string;
   citizenPhone?: string;
   divisionCode: string; // GN Division code or "GENERAL" (பொது)
+  dsDivisionId?: string; // Link to Divisional Secretariat (e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH")
   status: TokenStatus;
   issuedAt: string;
   calledAt?: string;
@@ -286,6 +493,7 @@ export interface AssistanceRecord {
   beneficiaryNic: string;
   beneficiaryName: string;
   divisionCode: string;
+  dsDivisionId?: string; // Link to Divisional Secretariat (e.g. "DS_VAHARAI", "DS_MANMUNAI_NORTH")
   householdNo?: string;
   aidCategory: AidCategory;
   aidDescription: string; // e.g. "25kg உலர் உணவுப் பொதி (25kg Dry Rations)"
@@ -345,6 +553,7 @@ export interface PregnantMotherRecord {
   name: string; // பெயர்
   nic: string; // தேசிய அடையாள அட்டை இலக்கம்
   divisionCode: string; // கிராம உத்தியோகத்தர் பிரிவு
+  dsDivisionId?: string; // e.g. "DS_VAHARAI"
   phone: string; // தொலைபேசி
   familyCode?: string; // குடும்ப QR / குறியீடு (Family Code)
   familyRelationship?: FamilyRelationship; // தாய் / மனைவி / etc.
@@ -388,6 +597,7 @@ export interface LandRecord {
   extent: string; // விஸ்தீரணம் (e.g. "0A-1R-20P" or "0.5 Acres")
   landType: LandType;
   divisionCode: string; // GN Division e.g. "211"
+  dsDivisionId?: string; // e.g. "DS_VAHARAI"
   ownerNic: string; // உரிமையாளர் NIC
   ownerNameTa: string; // உரிமையாளர் பெயர் (தமிழ்)
   ownerNameEn: string; // உரிமையாளர் பெயர் (ஆங்கிலம்)
@@ -502,6 +712,7 @@ export interface HouseholdData {
   phone: string; // e.g. "0760539158"
   address: string; // e.g. "SELVAPURAM KAYANKERNI"
   divisionCode: string; // e.g. "211A"
+  dsDivisionId?: string; // e.g. "DS_VAHARAI"
   status: 'DS_ENDORSED' | 'COMMITTEE_APPROVED' | 'GRIEVANCE_PENDING' | 'ACTIVE';
   selectedCategory: 'VULNERABLE' | 'EXTREME_POOR' | 'POOR' | 'TRANSITIONAL' | 'NON_VULNERABLE';
   objectionsStatus?: string; // e.g. "OC-08-10-2025-69523 [Completed]"
@@ -668,6 +879,7 @@ export interface PublicPetition {
   phone?: string;
   address?: string;
   divisionCode: string; // e.g. "211"
+  dsDivisionId?: string; // e.g. "DS_VAHARAI"
   targetDepartment: PetitionDepartment;
   requestType: PetitionType;
   subject: string;

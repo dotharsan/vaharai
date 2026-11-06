@@ -18,6 +18,8 @@ import {
   DEFAULT_POVERTY_WEIGHTS,
   calculateFamilyPovertyScore,
   PublicPetition,
+  DSDivision,
+  BATTICALOA_DS_DIVISIONS,
 } from '../types';
 import initialDatabaseSeed from '../data/central_database.json';
 import { scheduleAutoDriveSync } from './googleDrive';
@@ -38,6 +40,7 @@ const STORAGE_KEYS = {
   PETITIONS: 'vaharai_ds_petitions_v6',
   DELETED_IDS: 'vaharai_ds_deleted_ids_v6',
   INITIALIZED: 'vaharai_ds_initialized_v6',
+  DS_DIVISIONS: 'vaharai_ds_secretariats_v1',
 };
 
 // ================= PERMANENT DELETION & TOMBSTONE TRACKING (Requirement 01) ================= //
@@ -193,25 +196,43 @@ export const generateUniqueFamilyQrPayload = (familyCode: string, divisionCode: 
   return `VHR-FAMILY|FAM:${familyCode}|DIV:${divisionCode}|UID:${familyCode}-${salt}`;
 };
 
-// 16 Official GN Divisions in Koralaipattu North (Vaharai) + General Division option (Requirement 03)
-export const DEFAULT_DIVISIONS: GNDivision[] = ((initialDatabaseSeed as any)?.divisions as GNDivision[]) || [
-  { code: '213', nameEn: 'Kathiraveli', nameTa: 'கதிரவெளி', gnOfficerName: '', population: 2750, households: 690 },
-  { code: '213B', nameEn: 'Kaddumurivu', nameTa: 'கட்டுமுறிவு', gnOfficerName: '', population: 1420, households: 360 },
-  { code: '211C', nameEn: 'Panichchankerni', nameTa: 'பனிச்சங்கேணி', gnOfficerName: '', population: 2310, households: 580 },
-  { code: '211D', nameEn: 'Vaddavaan', nameTa: 'வட்டவான்', gnOfficerName: '', population: 1530, households: 380 },
-  { code: '211A', nameEn: 'Kayankerni', nameTa: 'காயான்கேணி', gnOfficerName: '', population: 2600, households: 650 },
-  { code: '212B', nameEn: 'Uooriyankaddu', nameTa: 'ஊரியன் கட்டு', gnOfficerName: '', population: 1390, households: 350 },
-  { code: '211E', nameEn: 'Mathurankernikulam', nameTa: 'மதுரங்கேணிக்குளம்', gnOfficerName: '', population: 1180, households: 290 },
-  { code: '212', nameEn: 'Vaharai Central', nameTa: 'வாகரை மத்தி', gnOfficerName: '', population: 1920, households: 480 },
-  { code: '211F', nameEn: 'Kirimichchi', nameTa: 'கிரிமிச்சை', gnOfficerName: '', population: 1720, households: 430 },
-  { code: '212A', nameEn: 'Vaharai North', nameTa: 'வாகரை வடக்கு', gnOfficerName: '', population: 2450, households: 610 },
-  { code: '211', nameEn: 'Mankerni Central', nameTa: 'மாங்கேணி மத்தி', gnOfficerName: '', population: 2890, households: 720 },
-  { code: '213D', nameEn: 'Ammanthanaaveli', nameTa: 'அம்மந்தனாவெளி', gnOfficerName: '', population: 1840, households: 460 },
-  { code: '213C', nameEn: 'Puchchakkerni', nameTa: 'புச்சக்கேணி', gnOfficerName: '', population: 1260, households: 320 },
-  { code: '211B', nameEn: 'Punaanai East', nameTa: 'புனானை கிழக்கு', gnOfficerName: '', population: 1650, households: 410 },
-  { code: '213A', nameEn: 'Paalchenai', nameTa: 'பால்சேனை', gnOfficerName: '', population: 2180, households: 540 },
-  { code: '211G', nameEn: 'Mankerni South', nameTa: 'மாங்கேணி தெற்கு', gnOfficerName: '', population: 1980, households: 510 },
-  { code: 'GENERAL', nameEn: 'General (Outside / Public)', nameTa: 'பொது (வெளிப் பிரதேசம் / பொதுமக்கள்)', gnOfficerName: 'பொதுமக்கள் கருமபீடம்', population: 0, households: 0 },
+// 16 Official GN Divisions in Koralaipattu North (Vaharai) + General Division option + Starter GN Divisions for Batticaloa
+export const DEFAULT_DIVISIONS: GNDivision[] = [
+  // 16 GN Divisions of Koralaipattu North (Vaharai)
+  { code: '213', nameEn: 'Kathiraveli', nameTa: 'கதிரவெளி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2750, households: 690 },
+  { code: '213B', nameEn: 'Kaddumurivu', nameTa: 'கட்டுமுறிவு', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1420, households: 360 },
+  { code: '211C', nameEn: 'Panichchankerni', nameTa: 'பனிச்சங்கேணி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2310, households: 580 },
+  { code: '211D', nameEn: 'Vaddavaan', nameTa: 'வட்டவான்', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1530, households: 380 },
+  { code: '211A', nameEn: 'Kayankerni', nameTa: 'காயான்கேணி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2600, households: 650 },
+  { code: '212B', nameEn: 'Uooriyankaddu', nameTa: 'ஊரியன் கட்டு', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1390, households: 350 },
+  { code: '211E', nameEn: 'Mathurankernikulam', nameTa: 'மதுரங்கேணிக்குளம்', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1180, households: 290 },
+  { code: '212', nameEn: 'Vaharai Central', nameTa: 'வாகரை மத்தி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1920, households: 480 },
+  { code: '211F', nameEn: 'Kirimichchi', nameTa: 'கிரிமிச்சை', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1720, households: 430 },
+  { code: '212A', nameEn: 'Vaharai North', nameTa: 'வாகரை வடக்கு', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2450, households: 610 },
+  { code: '211', nameEn: 'Mankerni Central', nameTa: 'மாங்கேணி மத்தி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2890, households: 720 },
+  { code: '213D', nameEn: 'Ammanthanaaveli', nameTa: 'அம்மந்தனாவெளி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1840, households: 460 },
+  { code: '213C', nameEn: 'Puchchakkerni', nameTa: 'புச்சக்கேணி', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1260, households: 320 },
+  { code: '211B', nameEn: 'Punaanai East', nameTa: 'புனானை கிழக்கு', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1650, households: 410 },
+  { code: '213A', nameEn: 'Paalchenai', nameTa: 'பால்சேனை', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 2180, households: 540 },
+  { code: '211G', nameEn: 'Mankerni South', nameTa: 'மாங்கேணி தெற்கு', dsDivisionId: 'DS_VAHARAI', gnOfficerName: '', population: 1980, households: 510 },
+  { code: 'GENERAL', nameEn: 'General (Outside / Public)', nameTa: 'பொது (வெளிப் பிரதேசம் / பொதுமக்கள்)', dsDivisionId: 'DS_VAHARAI', gnOfficerName: 'பொதுமக்கள் கருமபீடம்', population: 0, households: 0 },
+
+  // Initial Starter GN Divisions for Manmunai North (Batticaloa Town)
+  { code: 'MN-01', nameEn: 'Batticaloa Town', nameTa: 'மட்டக்களப்பு நகர்', dsDivisionId: 'DS_MANMUNAI_NORTH', gnOfficerName: 'கே. சிவகுமார்', population: 3200, households: 820 },
+  { code: 'MN-02', nameEn: 'Puliyanthivu Central', nameTa: 'புளியந்தீவு மத்தி', dsDivisionId: 'DS_MANMUNAI_NORTH', gnOfficerName: 'ஆர். வசந்தகுமார்', population: 2950, households: 760 },
+  { code: 'MN-03', nameEn: 'Kodukkamunai', nameTa: 'கொடுக்காமுனை', dsDivisionId: 'DS_MANMUNAI_NORTH', gnOfficerName: 'எம். தர்மராஜா', population: 2400, households: 610 },
+
+  // Initial Starter GN Divisions for Eravur Pattu (Chenkalady)
+  { code: 'EP-01', nameEn: 'Chenkalady Central', nameTa: 'செங்கலடி மத்தி', dsDivisionId: 'DS_ERAVUR_PATTU', gnOfficerName: 'எஸ். சசிதரன்', population: 3100, households: 790 },
+  { code: 'EP-02', nameEn: 'Kommathurai', nameTa: 'கொம்மாதுறை', dsDivisionId: 'DS_ERAVUR_PATTU', gnOfficerName: 'வி. மகேந்திரன்', population: 2650, households: 680 },
+
+  // Initial Starter GN Divisions for Kattankudy
+  { code: 'KT-01', nameEn: 'Kattankudy 01', nameTa: 'காத்தான்குடி 01', dsDivisionId: 'DS_KATTANKUDY', gnOfficerName: 'ஏ.எல்.எம். நௌபர்', population: 3500, households: 890 },
+  { code: 'KT-02', nameEn: 'Kattankudy 02', nameTa: 'காத்தான்குடி 02', dsDivisionId: 'DS_KATTANKUDY', gnOfficerName: 'எம்.ஐ. ரமீஸ்', population: 3300, households: 840 },
+
+  // Initial Starter GN Divisions for Manmunai South & Eruvil Pattu (Kaluwanchikudy)
+  { code: 'SE-01', nameEn: 'Kaluwanchikudy 01', nameTa: 'களுவாஞ்சிகுடி 01', dsDivisionId: 'DS_MANMUNAI_SOUTH_ERUVIL', gnOfficerName: 'பி. திலீபன்', population: 3150, households: 810 },
+  { code: 'SE-02', nameEn: 'Kaluthavalai', nameTa: 'களுதாவளை', dsDivisionId: 'DS_MANMUNAI_SOUTH_ERUVIL', gnOfficerName: 'எஸ். கண்ணன்', population: 2850, households: 730 },
 ];
 
 export const DEFAULT_GN_DIVISIONS = DEFAULT_DIVISIONS;
@@ -220,7 +241,7 @@ export const getDivisionByCode = (code: string, divisions: GNDivision[] = DEFAUL
   if (!code) return undefined;
   const clean = code.trim().toUpperCase();
   if (clean === 'GENERAL' || clean === 'பொது') {
-    return { code: 'GENERAL', nameEn: 'General (Outside / Public)', nameTa: 'பொது (வெளிப் பிரதேசம் / பொதுமக்கள்)', gnOfficerName: 'பொதுமக்கள் கருமபீடம்', population: 0, households: 0 };
+    return { code: 'GENERAL', nameEn: 'General (Outside / Public)', nameTa: 'பொது (வெளிப் பிரதேசம் / பொதுமக்கள்)', dsDivisionId: 'DS_VAHARAI', gnOfficerName: 'பொதுமக்கள் கருமபீடம்', population: 0, households: 0 };
   }
   return (
     divisions.find((d) => d.code.toUpperCase() === clean) ||
@@ -229,13 +250,42 @@ export const getDivisionByCode = (code: string, divisions: GNDivision[] = DEFAUL
   );
 };
 
-// Clean Production Database: Sole Super Admin seeded according to official mandate
+// District Master Admin User (மட்டக்களப்பு மாவட்ட செயலக தலைமை அட்மின்)
+export const INITIAL_DISTRICT_ADMIN_USER: User = {
+  id: 'dist_admin',
+  password: 'admin123',
+  name: 'மட்டக்களப்பு மாவட்ட செயலக தலைமை அட்மின் (District Master Admin)',
+  role: 'DISTRICT_ADMIN',
+  division: 'ALL',
+  dsDivisionId: 'DISTRICT_HQ',
+  status: 'ACTIVE',
+  createdAt: '2026-01-01T00:00:00Z',
+  email: 'ga.batticaloa@moha.gov.lk',
+  phone: '0652222235',
+};
+
+// 14 Super Admin users for each of the 14 Divisional Secretariats of Batticaloa District
+export const DIVISIONAL_SUPERADMIN_USERS: User[] = BATTICALOA_DS_DIVISIONS.map((ds) => ({
+  id: ds.superAdminId,
+  password: ds.defaultPassword || 'admin123',
+  name: `${ds.superAdminNameTa} (${ds.nameEn})`,
+  role: 'SUPERADMIN' as const,
+  division: 'ALL',
+  dsDivisionId: ds.id,
+  status: 'ACTIVE' as const,
+  createdAt: '2026-01-01T00:00:00Z',
+  email: `ds.${ds.id.toLowerCase().replace('ds_', '')}@batticaloa.dist.gov.lk`,
+  phone: '0652222200',
+}));
+
+// Clean Production Database: Sole Super Admin for Vaharai
 export const INITIAL_SUPERADMIN_USER: User = {
   id: '93008148555',
   password: '19930108',
-  name: 'பிரதேச செயலாளர் (Super Admin)',
+  name: 'பிரதேச செயலாளர் (Super Admin - வாகரை)',
   role: 'SUPERADMIN',
   division: 'ALL',
+  dsDivisionId: 'DS_VAHARAI',
   status: 'ACTIVE',
   createdAt: '2026-01-01T00:00:00Z',
 };
@@ -246,11 +296,16 @@ export const INITIAL_LAND_OFFICER_USER: User = {
   name: 'காணி பிரிவு உத்தியோகத்தர் (Land Officer)',
   role: 'LAND_OFFICER',
   division: 'ALL',
+  dsDivisionId: 'DS_VAHARAI',
   status: 'ACTIVE',
   createdAt: '2026-01-01T00:00:00Z',
 };
 
-export const DEFAULT_USERS: User[] = ((initialDatabaseSeed as any)?.users as User[]) || [INITIAL_SUPERADMIN_USER, INITIAL_LAND_OFFICER_USER];
+export const DEFAULT_USERS: User[] = [
+  INITIAL_DISTRICT_ADMIN_USER,
+  ...DIVISIONAL_SUPERADMIN_USERS,
+  ...(((initialDatabaseSeed as any)?.users as User[]) || []),
+];
 
 // Clean Citizens Database from official seed
 export const DEFAULT_BENEFICIARIES: Beneficiary[] = ((initialDatabaseSeed as any)?.beneficiaries as Beneficiary[]) || [];
@@ -512,21 +567,40 @@ export const setStoredData = <T>(key: string, data: T): void => {
 export const loadUsers = (): User[] => {
   let users = getStoredData<User[]>(STORAGE_KEYS.USERS, DEFAULT_USERS);
   let changed = false;
-  if (users.length < DEFAULT_USERS.length && DEFAULT_USERS.length > 2) {
-    const map = new Map<string, User>();
-    DEFAULT_USERS.forEach((u) => map.set(u.id, u));
-    users.forEach((u) => map.set(u.id, u));
-    users = Array.from(map.values());
+
+  // 1. Ensure District Master Admin exists
+  if (!users.some((u) => u.id === 'dist_admin' || u.role === 'DISTRICT_ADMIN')) {
+    users = [INITIAL_DISTRICT_ADMIN_USER, ...users];
     changed = true;
   }
-  if (!users.some((u) => u.id === '93008148555')) {
-    users = [INITIAL_SUPERADMIN_USER, ...users];
-    changed = true;
-  }
-  if (!users.some((u) => u.id === '605' || u.role === 'LAND_OFFICER')) {
-    users = [...users, INITIAL_LAND_OFFICER_USER];
-    changed = true;
-  }
+
+  // 2. Ensure each of the 14 Divisional Super Admins exists
+  DIVISIONAL_SUPERADMIN_USERS.forEach((superUser) => {
+    const existingIndex = users.findIndex((u) => u.id === superUser.id);
+    if (existingIndex === -1) {
+      users.push(superUser);
+      changed = true;
+    } else {
+      // Ensure dsDivisionId is assigned
+      if (!users[existingIndex].dsDivisionId) {
+        users[existingIndex].dsDivisionId = superUser.dsDivisionId;
+        changed = true;
+      }
+    }
+  });
+
+  // 3. Ensure legacy Vaharai staff users have dsDivisionId: 'DS_VAHARAI'
+  users = users.map((u) => {
+    if (!u.dsDivisionId) {
+      changed = true;
+      return {
+        ...u,
+        dsDivisionId: u.role === 'DISTRICT_ADMIN' ? 'DISTRICT_HQ' : 'DS_VAHARAI',
+      };
+    }
+    return u;
+  });
+
   if (changed) {
     setStoredData(STORAGE_KEYS.USERS, users);
   }
@@ -1126,32 +1200,80 @@ export const resetDatabaseToDefaults = (): void => {
   scheduleCentralSync();
 };
 
-export const loadDivisions = (): GNDivision[] => {
-  const stored = getStoredData<GNDivision[]>(STORAGE_KEYS.DIVISIONS, DEFAULT_DIVISIONS);
-  const storedCodes = new Set(stored.map((d) => d.code));
-  // If stored has obsolete divisions (e.g. 215, 214) or does not match 16 divisions, reset to DEFAULT_DIVISIONS
-  const hasObsolete = storedCodes.has('215') || storedCodes.has('214') || storedCodes.has('215A') || storedCodes.has('215B');
-  if (hasObsolete || stored.length !== 16 || !storedCodes.has('213D') || !storedCodes.has('211G') || !storedCodes.has('212B')) {
-    setStoredData(STORAGE_KEYS.DIVISIONS, DEFAULT_DIVISIONS);
-    return DEFAULT_DIVISIONS;
+export const loadDsDivisions = (): DSDivision[] => {
+  let stored = getStoredData<DSDivision[]>(STORAGE_KEYS.DS_DIVISIONS, BATTICALOA_DS_DIVISIONS);
+  if (!stored || stored.length === 0) {
+    stored = BATTICALOA_DS_DIVISIONS;
+    setStoredData(STORAGE_KEYS.DS_DIVISIONS, stored);
+    return stored;
   }
-  // Ensure Uooriyankaddu is correctly code 212B and ஊரியன் கட்டு
-  const normalized = stored.map((d) => {
-    if (d.code === '212B' || d.nameEn.toLowerCase().includes('oooriyankaddu') || d.nameTa.includes('ஊரியன்') || d.nameTa.includes('உரியன்')) {
-      return {
-        ...d,
-        code: '212B',
-        nameEn: 'Uooriyankaddu',
-        nameTa: 'ஊரியன் கட்டு',
-      };
+  // Ensure default 14 divisions are preserved
+  const existingIds = new Set(stored.map((d) => d.id));
+  let changed = false;
+  BATTICALOA_DS_DIVISIONS.forEach((defDs) => {
+    if (!existingIds.has(defDs.id)) {
+      stored.push(defDs);
+      existingIds.add(defDs.id);
+      changed = true;
+    }
+  });
+  if (changed) {
+    setStoredData(STORAGE_KEYS.DS_DIVISIONS, stored);
+  }
+  return stored;
+};
+
+export const saveDsDivisions = (dsList: DSDivision[]) => {
+  setStoredData(STORAGE_KEYS.DS_DIVISIONS, dsList);
+  notifyCrossTabSync('DS_DIVISIONS_UPDATED');
+};
+
+export const getDsDivisions = (): DSDivision[] => {
+  return loadDsDivisions();
+};
+
+export const getDsDivisionById = (id?: string): DSDivision | undefined => {
+  if (!id) return undefined;
+  return loadDsDivisions().find((d) => d.id === id);
+};
+
+export const getDsDivisionForUser = (user?: User | null): DSDivision | undefined => {
+  if (!user || !user.dsDivisionId) return undefined;
+  return loadDsDivisions().find((d) => d.id === user.dsDivisionId);
+};
+
+export const loadDivisions = (): GNDivision[] => {
+  let stored = getStoredData<GNDivision[]>(STORAGE_KEYS.DIVISIONS, DEFAULT_DIVISIONS);
+  let changed = false;
+
+  // Ensure all stored divisions have dsDivisionId (defaulting legacy to DS_VAHARAI)
+  stored = stored.map((d) => {
+    if (!d.dsDivisionId) {
+      changed = true;
+      return { ...d, dsDivisionId: 'DS_VAHARAI' };
     }
     return d;
   });
-  return normalized;
+
+  // Ensure starter divisions from DEFAULT_DIVISIONS are present
+  const existingCodes = new Set(stored.map((d) => d.code.toUpperCase()));
+  DEFAULT_DIVISIONS.forEach((defDiv) => {
+    if (!existingCodes.has(defDiv.code.toUpperCase())) {
+      stored.push(defDiv);
+      existingCodes.add(defDiv.code.toUpperCase());
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    setStoredData(STORAGE_KEYS.DIVISIONS, stored);
+  }
+  return stored;
 };
 export const saveDivisions = (divs: GNDivision[]) => {
   setStoredData(STORAGE_KEYS.DIVISIONS, divs);
   scheduleCentralSync();
+  notifyCrossTabSync('DIVISIONS_UPDATED');
 };
 
 export const loadAuditLogs = (): SystemAuditLog[] => getStoredData<SystemAuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);

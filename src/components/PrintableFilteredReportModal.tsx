@@ -13,6 +13,8 @@ interface PrintableFilteredReportModalProps {
   searchQuery: string;
   lang: Language;
   onClose: () => void;
+  organizationTitleTa?: string;
+  organizationTitleEn?: string;
 }
 
 export const PrintableFilteredReportModal: React.FC<PrintableFilteredReportModalProps> = ({
@@ -25,6 +27,8 @@ export const PrintableFilteredReportModal: React.FC<PrintableFilteredReportModal
   searchQuery,
   lang,
   onClose,
+  organizationTitleTa,
+  organizationTitleEn,
 }) => {
   const t = translations[lang];
 
@@ -80,10 +84,10 @@ export const PrintableFilteredReportModal: React.FC<PrintableFilteredReportModal
               இலங்கை ஜனநாயக சோசலிசக் குடியரசு · Democratic Socialist Republic of Sri Lanka
             </div>
             <h1 className="text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-              கோறளைப்பற்று வடக்கு (வாகரை) பிரதேச செயலகம்
+              {organizationTitleTa || 'கோறளைப்பற்று வடக்கு (வாகரை) பிரதேச செயலகம்'}
             </h1>
             <h2 className="text-sm font-bold text-slate-800">
-              Divisional Secretariat - Koralaipattu North, Vaharai
+              {organizationTitleEn || 'Divisional Secretariat - Koralaipattu North, Vaharai'}
             </h2>
             <div className="text-[11px] text-emerald-900 font-medium mt-1">
               மட்டக்களப்பு மாவட்டம் · Batticaloa District · Eastern Province

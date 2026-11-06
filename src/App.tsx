@@ -22,6 +22,7 @@ import {
   loadTokens,
   saveTokens,
   loadDivisions,
+  saveDivisions,
   loadAuditLogs,
   logAuditAction,
   loadAssistanceRecords,
@@ -44,6 +45,7 @@ import {
   restoreDatabaseFromSnapshot,
   isServerApiAvailable,
   createDatabaseSnapshot,
+  getDsDivisionById,
 } from './services/storage';
 import {
   getActiveUserSession,
@@ -80,6 +82,8 @@ import { PublicPetitionsView } from './components/PublicPetitionsView';
 import { LandManagementView } from './components/LandManagementView';
 import { FamilyDataCenterView } from './components/FamilyDataCenterView';
 import { UniversalCitizenSearchView } from './components/UniversalCitizenSearchView';
+import { DistrictMasterAdminView } from './components/DistrictMasterAdminView';
+import { GnDivisionsManagementView } from './components/GnDivisionsManagementView';
 import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { StorageTransparencyModal } from './components/StorageTransparencyModal';
 import { OfficeLayoutModal } from './components/OfficeLayoutModal';
@@ -91,6 +95,11 @@ export default function App() {
   const [lang, setLang] = useState<Language>('ta');
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
+  const [selectedDsDivisionId, setSelectedDsDivisionId] = useState<string>(() => {
+    const session = getActiveUserSession();
+    if (session?.role === 'DISTRICT_ADMIN') return 'ALL';
+    return session?.dsDivisionId || 'DS_VAHARAI';
+  });
 
   // Persistent Databases
   const [users, setUsers] = useState<User[]>(() => loadUsers());
@@ -127,7 +136,10 @@ export default function App() {
       const found = users.find((u) => u.id === session.id);
       if (found) {
         setCurrentUser(found);
-        if (found.role === 'LAND_OFFICER') {
+        setSelectedDsDivisionId(found.role === 'DISTRICT_ADMIN' ? 'ALL' : (found.dsDivisionId || 'DS_VAHARAI'));
+        if (found.role === 'DISTRICT_ADMIN') {
+          setCurrentTab('district');
+        } else if (found.role === 'LAND_OFFICER') {
           setCurrentTab('land');
         } else if (found.role === 'Reception Registrar') {
           setCurrentTab('reception');
@@ -326,7 +338,11 @@ export default function App() {
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
     setActiveUserSession(user);
-    if (user.role === 'LAND_OFFICER') {
+    const initialDsId = user.role === 'DISTRICT_ADMIN' ? 'ALL' : (user.dsDivisionId || 'DS_VAHARAI');
+    setSelectedDsDivisionId(initialDsId);
+    if (user.role === 'DISTRICT_ADMIN') {
+      setCurrentTab('district');
+    } else if (user.role === 'LAND_OFFICER') {
       setCurrentTab('land');
     } else if (user.role === 'Reception Registrar') {
       setCurrentTab('reception');
@@ -361,9 +377,35 @@ export default function App() {
     }
   };
 
+  // Multi-Tenant Isolation Context
+  const isDistrictAdmin = currentUser?.role === 'DISTRICT_ADMIN';
+  const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
+  const isAdmin = currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2' || isSuperAdmin || isDistrictAdmin;
+
+  // Active divisional tenant identifier:
+  // For DISTRICT_ADMIN: if selectedDsDivisionId === 'ALL', tenant scope is whole district (no isolation).
+  // If selectedDsDivisionId !== 'ALL', tenant scope is the selected secretariat.
+  // For other users: strictly isolated to their own currentUser.dsDivisionId (default 'DS_VAHARAI').
+  const activeTenantDsId = isDistrictAdmin
+    ? (selectedDsDivisionId !== 'ALL' ? selectedDsDivisionId : null)
+    : (currentUser?.dsDivisionId || 'DS_VAHARAI');
+
   const handleUpdateUsers = (newUsers: User[]) => {
-    setUsers(newUsers);
-    saveUsers(newUsers);
+    if (isDistrictAdmin) {
+      setUsers(newUsers);
+      saveUsers(newUsers);
+    } else {
+      const activeDs = currentUser?.dsDivisionId || 'DS_VAHARAI';
+      const otherUsers = users.filter((u) => (u.dsDivisionId || 'DS_VAHARAI') !== activeDs);
+      const stampedUsers = newUsers.map((u) => ({
+        ...u,
+        dsDivisionId: u.dsDivisionId || activeDs,
+        createdBySuperAdminId: u.createdBySuperAdminId || currentUser?.id,
+      }));
+      const merged = [...otherUsers, ...stampedUsers];
+      setUsers(merged);
+      saveUsers(merged);
+    }
     if (currentUser) {
       const updatedSelf = newUsers.find((u) => u.id === currentUser.id);
       if (updatedSelf) {
@@ -373,19 +415,68 @@ export default function App() {
     }
   };
 
+  const handleUpdateDivisions = (newDivs: GNDivision[]) => {
+    if (!activeTenantDsId) {
+      setDivisions(newDivs);
+      saveDivisions(newDivs);
+    } else {
+      const stamped = newDivs.map((d) => ({
+        ...d,
+        dsDivisionId: d.dsDivisionId || activeTenantDsId,
+      }));
+      const others = divisions.filter((d) => (d.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setDivisions(merged);
+      saveDivisions(merged);
+    }
+  };
+
   const handleUpdateBeneficiaries = (newItems: Beneficiary[]) => {
-    setBeneficiaries(newItems);
-    saveBeneficiaries(newItems);
+    if (!activeTenantDsId) {
+      setBeneficiaries(newItems);
+      saveBeneficiaries(newItems);
+    } else {
+      const stamped = newItems.map((b) => ({
+        ...b,
+        dsDivisionId: b.dsDivisionId || activeTenantDsId,
+      }));
+      const others = beneficiaries.filter((b) => (b.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setBeneficiaries(merged);
+      saveBeneficiaries(merged);
+    }
   };
 
   const handleUpdateTokens = (newTokens: QueueToken[]) => {
-    setTokens(newTokens);
-    saveTokens(newTokens);
+    if (!activeTenantDsId) {
+      setTokens(newTokens);
+      saveTokens(newTokens);
+    } else {
+      const stamped = newTokens.map((t) => ({
+        ...t,
+        dsDivisionId: t.dsDivisionId || activeTenantDsId,
+      }));
+      const others = tokens.filter((t) => (t.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setTokens(merged);
+      saveTokens(merged);
+    }
   };
 
   const handleUpdateAssistanceRecords = (newRecords: AssistanceRecord[]) => {
-    setAssistanceRecords(newRecords);
-    saveAssistanceRecords(newRecords);
+    if (!activeTenantDsId) {
+      setAssistanceRecords(newRecords);
+      saveAssistanceRecords(newRecords);
+    } else {
+      const stamped = newRecords.map((a) => ({
+        ...a,
+        dsDivisionId: a.dsDivisionId || activeTenantDsId,
+      }));
+      const others = assistanceRecords.filter((a) => (a.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setAssistanceRecords(merged);
+      saveAssistanceRecords(merged);
+    }
   };
 
   const handleUpdateServices = (newServices: ServiceDefinition[]) => {
@@ -394,18 +485,51 @@ export default function App() {
   };
 
   const handleUpdatePregnantMothers = (newRecords: PregnantMotherRecord[]) => {
-    setPregnantMothers(newRecords);
-    savePregnantMothers(newRecords);
+    if (!activeTenantDsId) {
+      setPregnantMothers(newRecords);
+      savePregnantMothers(newRecords);
+    } else {
+      const stamped = newRecords.map((m) => ({
+        ...m,
+        dsDivisionId: m.dsDivisionId || activeTenantDsId,
+      }));
+      const others = pregnantMothers.filter((m) => (m.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setPregnantMothers(merged);
+      savePregnantMothers(merged);
+    }
   };
 
   const handleUpdateLandRecords = (newLand: LandRecord[]) => {
-    setLandRecords(newLand);
-    saveLandRecords(newLand);
+    if (!activeTenantDsId) {
+      setLandRecords(newLand);
+      saveLandRecords(newLand);
+    } else {
+      const stamped = newLand.map((l) => ({
+        ...l,
+        dsDivisionId: l.dsDivisionId || activeTenantDsId,
+      }));
+      const others = landRecords.filter((l) => (l.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setLandRecords(merged);
+      saveLandRecords(merged);
+    }
   };
 
   const handleUpdateHouseholds = (newHouseholds: HouseholdData[]) => {
-    setHouseholds(newHouseholds);
-    saveHouseholds(newHouseholds);
+    if (!activeTenantDsId) {
+      setHouseholds(newHouseholds);
+      saveHouseholds(newHouseholds);
+    } else {
+      const stamped = newHouseholds.map((h) => ({
+        ...h,
+        dsDivisionId: h.dsDivisionId || activeTenantDsId,
+      }));
+      const others = households.filter((h) => (h.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setHouseholds(merged);
+      saveHouseholds(merged);
+    }
   };
 
   const handleUpdatePovertyWeights = (weights: PovertyScoringWeights) => {
@@ -414,9 +538,59 @@ export default function App() {
   };
 
   const handleUpdatePetitions = (newPetitions: PublicPetition[]) => {
-    setPetitions(newPetitions);
-    savePetitions(newPetitions);
+    if (!activeTenantDsId) {
+      setPetitions(newPetitions);
+      savePetitions(newPetitions);
+    } else {
+      const stamped = newPetitions.map((p) => ({
+        ...p,
+        dsDivisionId: p.dsDivisionId || activeTenantDsId,
+      }));
+      const others = petitions.filter((p) => (p.dsDivisionId || 'DS_VAHARAI') !== activeTenantDsId);
+      const merged = [...others, ...stamped];
+      setPetitions(merged);
+      savePetitions(merged);
+    }
   };
+
+  // Scoped datasets filtered by tenant secretariat
+  const scopedDivisions = activeTenantDsId
+    ? divisions.filter((d) => (d.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : divisions;
+
+  const scopedBeneficiaries = activeTenantDsId
+    ? beneficiaries.filter((b) => (b.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : beneficiaries;
+
+  const scopedTokens = activeTenantDsId
+    ? tokens.filter((t) => (t.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : tokens;
+
+  const scopedAssistanceRecords = activeTenantDsId
+    ? assistanceRecords.filter((a) => (a.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : assistanceRecords;
+
+  const scopedPregnantMothers = activeTenantDsId
+    ? pregnantMothers.filter((m) => (m.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : pregnantMothers;
+
+  const scopedLandRecords = activeTenantDsId
+    ? landRecords.filter((l) => (l.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : landRecords;
+
+  const scopedHouseholds = activeTenantDsId
+    ? households.filter((h) => (h.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : households;
+
+  const scopedPetitions = activeTenantDsId
+    ? petitions.filter((p) => (p.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
+    : petitions;
+
+  const scopedUsers = isDistrictAdmin
+    ? (selectedDsDivisionId !== 'ALL'
+        ? users.filter((u) => u.dsDivisionId === selectedDsDivisionId || u.role === 'DISTRICT_ADMIN')
+        : users)
+    : users.filter((u) => (u.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId);
 
   const handleDatabaseReload = () => {
     setUsers(loadUsers());
@@ -570,8 +744,6 @@ export default function App() {
   }
 
   // Safety checks for Role-based Tab Access
-  const isSuperAdmin = currentUser.role === 'SUPERADMIN';
-  const isAdmin = currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2' || isSuperAdmin;
   const isReception = currentUser.role === 'Reception Registrar';
   const isNormal = currentUser.role === 'NORMAL'; // Dedicated Live Counter TV user
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
@@ -585,10 +757,17 @@ export default function App() {
   const canAccessDisability = isAdmin || isDisabilityOfficer || isGramaNiladhari || currentUser.role === 'DATAENRY OFFCER';
   const canAccessLand = isAdmin || isLandOfficer;
   const canAccessFamilyCenter = !isReception && !isNormal && !isLandOfficer;
+  const canAccessStaff = isSuperAdmin || isDistrictAdmin;
+  const canAccessGnDivisions = isSuperAdmin || isDistrictAdmin;
+  const canAccessDistrict = isDistrictAdmin;
 
   let safeTab = currentTab;
   if (isNormal) {
     safeTab = 'live-display';
+  } else if (currentTab === 'district' && !canAccessDistrict) {
+    safeTab = 'dashboard';
+  } else if (currentTab === 'gn-divisions' && !canAccessGnDivisions) {
+    safeTab = 'dashboard';
   } else if (isLandOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
     safeTab = 'land';
   } else if (isElderlyOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
@@ -601,7 +780,7 @@ export default function App() {
     safeTab = 'dashboard';
   } else if (currentTab === 'family-center' && !canAccessFamilyCenter) {
     safeTab = 'dashboard';
-  } else if (currentTab === 'staff' && !isSuperAdmin) {
+  } else if (currentTab === 'staff' && !canAccessStaff) {
     safeTab = 'dashboard';
   } else if (currentTab === 'services' && !isSuperAdmin) {
     safeTab = 'dashboard';
@@ -642,6 +821,8 @@ export default function App() {
         onSaveToDriveNow={handleSaveToDriveNow}
         onOpenStorageTransparency={() => setShowStorageModal(true)}
         onOpenOfficeLayout={() => setShowOfficeLayoutModal(true)}
+        selectedDsDivisionId={selectedDsDivisionId}
+        onSelectDsDivision={(dsId) => setSelectedDsDivisionId(dsId)}
       />
 
       {/* Floating Status / Sync Toast */}
@@ -668,31 +849,63 @@ export default function App() {
             isSyncing={isManualSyncing}
             onQuickSync={handleQuickSyncNow}
             onSaveToDriveNow={handleSaveToDriveNow}
+            selectedDsDivisionId={selectedDsDivisionId}
           />
         )}
 
         {/* Main View Area with strict overflow safety */}
         <main className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 no-print overflow-x-hidden max-w-7xl mx-auto w-full">
-        {safeTab === 'dashboard' && (
-          <DashboardView
+        {safeTab === 'district' && (
+          <DistrictMasterAdminView
+            currentUser={currentUser}
+            users={users}
+            divisions={divisions}
             beneficiaries={beneficiaries}
             tokens={tokens}
-            divisions={divisions}
-            users={users}
+            petitions={petitions}
+            households={households}
+            lang={lang}
+            onUpdateUsers={handleUpdateUsers}
+            onAuditLog={handleAuditLog}
+            onSelectDsDivision={(dsId: string) => {
+              setSelectedDsDivisionId(dsId);
+              setCurrentTab('dashboard');
+            }}
+          />
+        )}
+
+        {safeTab === 'gn-divisions' && (
+          <GnDivisionsManagementView
+            currentUser={currentUser}
+            divisions={scopedDivisions}
+            users={scopedUsers}
+            lang={lang}
+            onUpdateDivisions={handleUpdateDivisions}
+            onAuditLog={handleAuditLog}
+          />
+        )}
+
+        {safeTab === 'dashboard' && (
+          <DashboardView
+            beneficiaries={scopedBeneficiaries}
+            tokens={scopedTokens}
+            divisions={scopedDivisions}
+            users={scopedUsers}
             auditLogs={auditLogs}
             currentUser={currentUser}
             lang={lang}
             onNavigate={(tab) => setCurrentTab(tab)}
+            selectedDsDivisionId={selectedDsDivisionId}
           />
         )}
 
         {safeTab === 'universal-search' && (
           <UniversalCitizenSearchView
-            beneficiaries={beneficiaries}
-            tokens={tokens}
-            assistanceRecords={assistanceRecords}
-            pregnantMothers={pregnantMothers}
-            divisions={divisions}
+            beneficiaries={scopedBeneficiaries}
+            tokens={scopedTokens}
+            assistanceRecords={scopedAssistanceRecords}
+            pregnantMothers={scopedPregnantMothers}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
           />
@@ -700,8 +913,8 @@ export default function App() {
 
         {safeTab === 'elderly' && (
           <ElderlyOfficerManagementView
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -711,8 +924,8 @@ export default function App() {
 
         {safeTab === 'maternity' && (
           <PregnantMothersView
-            pregnantMothers={pregnantMothers}
-            divisions={divisions}
+            pregnantMothers={scopedPregnantMothers}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdatePregnantMothers={handleUpdatePregnantMothers}
@@ -722,8 +935,8 @@ export default function App() {
 
         {safeTab === 'disability' && (
           <DisabilityOfficerManagementView
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -733,8 +946,8 @@ export default function App() {
 
         {safeTab === 'petitions' && (
           <PublicPetitionsView
-            petitions={petitions}
-            divisions={divisions}
+            petitions={scopedPetitions}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdatePetitions={handleUpdatePetitions}
@@ -744,8 +957,8 @@ export default function App() {
 
         {safeTab === 'beneficiaries' && (
           <BeneficiariesView
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -755,14 +968,14 @@ export default function App() {
 
         {safeTab === 'reception' && (
           <ReceptionTokenView
-            tokens={tokens}
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            tokens={scopedTokens}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             services={services}
-            assistanceRecords={assistanceRecords}
-            pregnantMothers={pregnantMothers}
-            landRecords={landRecords}
-            households={households}
+            assistanceRecords={scopedAssistanceRecords}
+            pregnantMothers={scopedPregnantMothers}
+            landRecords={scopedLandRecords}
+            households={scopedHouseholds}
             currentUser={currentUser}
             lang={lang}
             onUpdateTokens={handleUpdateTokens}
@@ -776,9 +989,9 @@ export default function App() {
 
         {safeTab === 'live-display' && (
           <LiveCounterDisplayView
-            tokens={tokens}
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            tokens={scopedTokens}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             lang={lang}
             onUpdateTokens={handleUpdateTokens}
             onAuditLog={handleAuditLog}
@@ -798,9 +1011,9 @@ export default function App() {
 
         {safeTab === 'ai-report' && (
           <AiReportView
-            beneficiaries={beneficiaries}
-            tokens={tokens}
-            divisions={divisions}
+            beneficiaries={scopedBeneficiaries}
+            tokens={scopedTokens}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onAuditLog={handleAuditLog}
@@ -809,9 +1022,9 @@ export default function App() {
 
         {safeTab === 'assistance' && (
           <AssistanceDistributionView
-            assistanceRecords={assistanceRecords}
-            beneficiaries={beneficiaries}
-            divisions={divisions}
+            assistanceRecords={scopedAssistanceRecords}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateAssistanceRecords={handleUpdateAssistanceRecords}
@@ -822,10 +1035,10 @@ export default function App() {
 
         {safeTab === 'family-center' && (
           <FamilyDataCenterView
-            households={households}
-            beneficiaries={beneficiaries}
-            assistanceRecords={assistanceRecords}
-            divisions={divisions}
+            households={scopedHouseholds}
+            beneficiaries={scopedBeneficiaries}
+            assistanceRecords={scopedAssistanceRecords}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             povertyWeights={povertyWeights}
@@ -838,8 +1051,8 @@ export default function App() {
 
         {safeTab === 'land' && (
           <LandManagementView
-            landRecords={landRecords}
-            divisions={divisions}
+            landRecords={scopedLandRecords}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateLandRecords={handleUpdateLandRecords}
@@ -848,14 +1061,14 @@ export default function App() {
           />
         )}
 
-        {safeTab === 'csv' && (
+        {safeTab === 'csv' && !isDistrictAdmin && (
           <CsvManagementView
-            beneficiaries={beneficiaries}
-            users={users}
-            divisions={divisions}
-            assistanceRecords={assistanceRecords}
-            pregnantMothers={pregnantMothers}
-            landRecords={landRecords}
+            beneficiaries={scopedBeneficiaries}
+            users={scopedUsers}
+            divisions={scopedDivisions}
+            assistanceRecords={scopedAssistanceRecords}
+            pregnantMothers={scopedPregnantMothers}
+            landRecords={scopedLandRecords}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -878,10 +1091,10 @@ export default function App() {
 
         {safeTab === 'service-audit' && (
           <ServiceAuditView
-            tokens={tokens}
-            beneficiaries={beneficiaries}
-            divisions={divisions}
-            users={users}
+            tokens={scopedTokens}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
+            users={scopedUsers}
             currentUser={currentUser}
             lang={lang}
             onUpdateTokens={handleUpdateTokens}
@@ -891,8 +1104,8 @@ export default function App() {
 
         {safeTab === 'staff' && (
           <StaffManagementView
-            users={users}
-            divisions={divisions}
+            users={scopedUsers}
+            divisions={scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateUsers={handleUpdateUsers}
@@ -938,7 +1151,14 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 py-4 px-4 sm:px-6 text-center text-xs text-slate-500 no-print w-full overflow-x-hidden">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>
-            © 2026 {lang === 'ta' ? 'கோறளைப்பற்று வடக்கு (வாகரை) பிரதேச செயலகம் · மட்டக்களப்பு மாவட்டம்' : 'Divisional Secretariat Koralaipattu North (Vaharai) · Batticaloa District'}
+            © 2026 {isDistrictAdmin && (!selectedDsDivisionId || selectedDsDivisionId === 'ALL')
+              ? (lang === 'ta' ? 'மட்டக்களப்பு மாவட்ட செயலகம் (14 பிரதேச செயலகங்கள்)' : 'Batticaloa District Secretariat (14 DS Divisions)')
+              : (() => {
+                  const activeDs = getDsDivisionById(isDistrictAdmin ? selectedDsDivisionId : currentUser?.dsDivisionId);
+                  return activeDs
+                    ? (lang === 'ta' ? `${activeDs.nameTa} பிரதேச செயலகம் · மட்டக்களப்பு மாவட்டம்` : `${activeDs.nameEn} Divisional Secretariat · Batticaloa District`)
+                    : (lang === 'ta' ? 'பிரதேச செயலகம் · மட்டக்களப்பு மாவட்டம்' : 'Divisional Secretariat · Batticaloa District');
+                })()}
           </span>
           <div className="flex items-center gap-3 text-[10px] sm:text-[11px] font-mono text-slate-400 flex-wrap justify-center">
             <span>Live Display: Normal User Support</span>

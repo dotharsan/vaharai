@@ -30,7 +30,12 @@ import {
   Phone,
   FileSpreadsheet,
   Trash2,
+  Building2,
+  BarChart3,
+  Eye,
+  Shield,
 } from 'lucide-react';
+import { loadDsDivisions } from '../services/storage';
 import { BeneficiaryIdCardModal } from './BeneficiaryIdCardModal';
 
 interface ElderlyOfficerManagementViewProps {
@@ -53,9 +58,16 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
   const t = translations[lang];
 
   // Role separation
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const officerDivision = isGramaNiladhari ? currentUser.division || '211' : '';
+
+  // District Admin sub-views: 'summary' (14 DS Summary Dashboard) | 'district_hq' (District HQ Records) | 'all' (All Secretariats Oversight)
+  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'summary' : 'all');
+  const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
+
+  const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
 
   // Filter ONLY senior citizens (Age >= 60, or isElderly, or ELDERLY welfare scheme)
   const elderlyCitizens = useMemo(() => {
@@ -64,6 +76,36 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
       return b.isElderly || age >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus;
     });
   }, [beneficiaries]);
+
+  // 14 DS Elderly Summary Breakdown
+  const dsElderlySummaryList = useMemo(() => {
+    return dsDivisionsList.map((ds) => {
+      const dsList = beneficiaries.filter(
+        (b) =>
+          (b.dsDivisionId || 'DS_VAHARAI') === ds.id &&
+          (b.isElderly || calculateAge(b.dob, b.nic) >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus)
+      );
+      const total = dsList.length;
+      const seniors70Plus = dsList.filter((b) => calculateAge(b.dob, b.nic) >= 70).length;
+      const receiving = dsList.filter((b) => b.elderlyAllowanceStatus === 'RECEIVING' || b.welfareScheme === 'ELDERLY').length;
+      const waitlist = dsList.filter((b) => b.elderlyAllowanceStatus === 'WAITLIST').length;
+      const notApplied = dsList.filter((b) => b.elderlyAllowanceStatus === 'NOT_APPLIED').length;
+      const livingAlone = dsList.filter((b) => b.elderlyLivingStatus === 'ALONE').length;
+      const wheelchair = dsList.filter(
+        (b) => b.elderlyMobilityStatus === 'WHEELCHAIR' || b.elderlyMobilityStatus === 'BEDRIDDEN'
+      ).length;
+      return {
+        ds,
+        total,
+        seniors70Plus,
+        receiving,
+        waitlist,
+        notApplied,
+        livingAlone,
+        wheelchair,
+      };
+    });
+  }, [dsDivisionsList, beneficiaries]);
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,6 +326,15 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
   // Filtered dataset
   const filteredList = useMemo(() => {
     return elderlyCitizens.filter((b) => {
+      // District Admin filter
+      if (isDistrictAdmin) {
+        if (districtSubView === 'district_hq') {
+          if (b.dsDivisionId !== 'DISTRICT_HQ' && b.dsDivisionId !== 'DISTRICT') return false;
+        } else if (selectedDsFilter !== 'ALL') {
+          if ((b.dsDivisionId || 'DS_VAHARAI') !== selectedDsFilter) return false;
+        }
+      }
+
       // 1. Division restriction
       if (isGramaNiladhari && b.divisionCode !== officerDivision) return false;
       if (!isGramaNiladhari && selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) return false;
@@ -431,13 +482,15 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={handleExportCsv}
-            className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>CSV</span>
-          </button>
+          {!isDistrictAdmin && (
+            <button
+              onClick={handleExportCsv}
+              className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>CSV</span>
+            </button>
+          )}
           <button
             onClick={handlePrint}
             className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -445,7 +498,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
             <Printer className="w-4 h-4" />
             <span>{lang === 'ta' ? 'அறிக்கை அச்சிடுக' : 'Print Report'}</span>
           </button>
-          {isSuperAdmin && elderlyCitizens.length > 0 && (
+          {!isDistrictAdmin && isSuperAdmin && elderlyCitizens.length > 0 && (
             <button
               type="button"
               onClick={handleClearAllElderly}
@@ -456,15 +509,197 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
               <span>{lang === 'ta' ? 'அனைத்து முதியோரையும் அழி' : 'Clear All Elderly'}</span>
             </button>
           )}
-          <button
-            onClick={handleOpenAddModal}
-            className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>{lang === 'ta' ? 'புதிய முதியோர் பதிவு' : 'Register Senior Citizen'}</span>
-          </button>
+          {!isDistrictAdmin && (
+            <button
+              onClick={handleOpenAddModal}
+              className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{lang === 'ta' ? 'புதிய முதியோர் பதிவு' : 'Register Senior Citizen'}</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* District Admin Mode Navigation & Sub-Tabs */}
+      {isDistrictAdmin && (
+        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-emerald-800" />
+              <span className="text-xs font-bold text-slate-800">
+                {lang === 'ta' ? 'மாவட்ட செயலகக் கட்டுப்பாட்டகம் · முதியோர் நலன்புரி' : 'District HQ Control Center · Senior Citizens Welfare'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {lang === 'ta' ? '14 பிரதேச செயலகங்களின் முதியோர் நிலைவரச் சுருக்கம்' : '14 Secretariats Senior Citizens Summary'}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setDistrictSubView('summary');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'summary'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சுருக்கம்' : '14 DS Summary Board'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('all');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'all'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'அனைத்து முதியோர் மேற்பார்வை' : 'All Secretariats Oversight'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'all' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {elderlyCitizens.length}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 14 DS Senior Citizens Summary Control Board */}
+      {isDistrictAdmin && districtSubView === 'summary' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'பிரதேச செயலகங்கள்' : 'DS Divisions'}</div>
+              <div className="text-xl font-black text-slate-900 mt-0.5">{dsDivisionsList.length}</div>
+              <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">{lang === 'ta' ? 'முழு மாவட்டம்' : 'District Total'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+              <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? '70+ முதியோர் மொத்தம்' : '70+ Seniors Total'}</div>
+              <div className="text-xl font-black text-emerald-950 mt-0.5">
+                {dsElderlySummaryList.reduce((acc, d) => acc + d.seniors70Plus, 0)}
+              </div>
+              <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'சிரேஷ்ட பிரஜைகள்' : 'Senior Citizens'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+              <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'கொடுப்பனவு பெறுவோர்' : 'Receiving Allowance'}</div>
+              <div className="text-xl font-black text-blue-900 mt-0.5">
+                {dsElderlySummaryList.reduce((acc, d) => acc + d.receiving, 0)}
+              </div>
+              <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? 'நிதி உதவி பெறுவோர்' : 'Beneficiaries'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-rose-200 shadow-xs bg-rose-50/30">
+              <div className="text-[11px] font-bold text-rose-800">{lang === 'ta' ? 'தனியாக வசிப்போர்' : 'Living Alone'}</div>
+              <div className="text-xl font-black text-rose-900 mt-0.5">
+                {dsElderlySummaryList.reduce((acc, d) => acc + d.livingAlone, 0)}
+              </div>
+              <div className="text-[10px] text-rose-700 mt-0.5">{lang === 'ta' ? 'உயர் முன்னுரிமை கவனிப்பு' : 'High Priority Care'}</div>
+            </div>
+          </div>
+
+          {/* 14 DS Breakdown Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-emerald-800" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  {lang === 'ta' ? '14 பிரதேச செயலகங்கள் முதியோர் நலன்புரி நிலைவர சுருக்கம்' : '14 DS Senior Citizens Welfare Summary'}
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-500 font-mono">
+                {dsDivisionsList.length} Secretariats
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-4"># குறியீடு</th>
+                    <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம் & தலைமையகம்' : 'DS Division & HQ'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த முதியோர்' : 'Total'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? '70+ முதியோர்' : '70+ Age'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'கொடுப்பனவு பெறுவோர்' : 'Receiving'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'காத்திருப்போர்' : 'Waitlist'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தனியாக வசிப்போர்' : 'Alone'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'இயலாமை / சக்கர நாற்காலி' : 'Mobility'}</th>
+                    <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dsElderlySummaryList.map((item) => (
+                    <tr key={item.ds.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-500">{item.ds.code}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 text-sm">
+                          {lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {item.ds.headquartersTa || item.ds.headquartersEn || item.ds.nameEn}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="font-bold text-slate-900 text-sm">{item.total}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          {item.seniors70Plus}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
+                          {item.receiving}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                          {item.waitlist}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-900 border border-rose-200">
+                          {item.livingAlone}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
+                          {item.wheelchair}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedDsFilter(item.ds.id);
+                            setDistrictSubView('all');
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 rounded-lg border border-slate-200 transition-colors text-xs font-semibold flex items-center gap-1 cursor-pointer ml-auto"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regular View Or District HQ / All Oversight View */}
+      {(!isDistrictAdmin || districtSubView !== 'summary') && (
+        <div className="space-y-6">
 
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -528,6 +763,21 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {isDistrictAdmin && (
+            <select
+              value={selectedDsFilter}
+              onChange={(e) => setSelectedDsFilter(e.target.value)}
+              className="px-2.5 py-2 text-xs border border-emerald-300 rounded-lg bg-emerald-50/50 font-bold text-emerald-950"
+            >
+              <option value="ALL">{lang === 'ta' ? 'அனைத்து பிரதேச செயலகங்களும் (14 DS)' : 'All DS Divisions (14 DS)'}</option>
+              {dsDivisionsList.map((ds) => (
+                <option key={ds.id} value={ds.id}>
+                  {ds.code} - {lang === 'ta' ? ds.nameTa : ds.nameEn}
+                </option>
+              ))}
+            </select>
+          )}
+
           {!isGramaNiladhari && (
             <select
               value={selectedDivision}
@@ -719,19 +969,23 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
                         >
                           அட்டை
                         </button>
-                        <button
-                          onClick={() => handleOpenEdit(b)}
-                          className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded text-[11px] font-bold border border-amber-200 cursor-pointer"
-                        >
-                          திருத்துக
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSingleElderly(b)}
-                          className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
-                          title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி' : 'Delete permanently'}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 inline" />
-                        </button>
+                        {!isDistrictAdmin && (
+                          <>
+                            <button
+                              onClick={() => handleOpenEdit(b)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded text-[11px] font-bold border border-amber-200 cursor-pointer"
+                            >
+                              திருத்துக
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSingleElderly(b)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
+                              title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி' : 'Delete permanently'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 inline" />
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   );
@@ -741,6 +995,8 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
           </table>
         </div>
       </div>
+    </div>
+  )}
 
       {/* Modal: Add / Edit Senior Citizen */}
       {showAddModal && (

@@ -30,8 +30,10 @@ import {
   Compass,
   Home,
   Accessibility,
+  Layers,
 } from 'lucide-react';
 import { DriveSyncStatus } from '../services/googleDrive';
+import { getDsDivisionForUser, getDsDivisionById } from '../services/storage';
 
 interface SidebarProps {
   currentUser: User | null;
@@ -47,6 +49,7 @@ interface SidebarProps {
   isSyncing: boolean;
   onQuickSync: () => void;
   onSaveToDriveNow: () => void;
+  selectedDsDivisionId?: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -63,12 +66,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isSyncing,
   onQuickSync,
   onSaveToDriveNow,
+  selectedDsDivisionId,
 }) => {
   const t = translations[lang];
 
   // RBAC permissions
+  const isDistrictAdmin = currentUser?.role === 'DISTRICT_ADMIN';
   const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
-  const isAdmin = currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2' || isSuperAdmin;
+  const isAdmin = currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2' || isSuperAdmin || isDistrictAdmin;
   const isReception = currentUser?.role === 'Reception Registrar';
   const isNormal = currentUser?.role === 'NORMAL';
   const isGramaNiladhari = currentUser?.role === 'GRAMANIILATHARI';
@@ -77,7 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isDisabilityOfficer = currentUser?.role === 'DISABILITY_OFFICER';
   const isLandOfficer = currentUser?.role === 'LAND_OFFICER';
 
-  const canAccessStaff = isSuperAdmin;
+  const canAccessDistrict = isDistrictAdmin;
+  const canAccessGnDivisions = isSuperAdmin || isDistrictAdmin;
+  const canAccessStaff = isSuperAdmin || isDistrictAdmin;
   const canAccessDrive = isAdmin;
   const canAccessAi = isAdmin;
   const canAccessLand = isAdmin || isLandOfficer;
@@ -86,10 +93,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const canAccessElderly = (isAdmin || isElderlyOfficer || isGramaNiladhari) && !isLandOfficer;
   const canAccessMaternity = (isAdmin || isMaternityOfficer || isGramaNiladhari) && !isLandOfficer;
   const canAccessDisability = (isAdmin || isDisabilityOfficer || isGramaNiladhari || currentUser?.role === 'DATAENRY OFFCER') && !isLandOfficer;
-  const canAccessCsv = (isAdmin || currentUser?.role === 'DATAENRY OFFCER') && !isNormal && !isLandOfficer;
+  const canAccessCsv = (isAdmin || currentUser?.role === 'DATAENRY OFFCER') && !isNormal && !isLandOfficer && !isDistrictAdmin;
   const canAccessDashboard = !isNormal && !isElderlyOfficer && !isMaternityOfficer && !isLandOfficer;
   const canAccessReception = !isNormal && !isElderlyOfficer && !isMaternityOfficer && !isLandOfficer;
   const canAccessUniversalSearch = !isNormal;
+
+  const effectiveDsId = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' ? selectedDsDivisionId : null)
+    : (currentUser?.dsDivisionId);
+  const currentDs = effectiveDsId ? getDsDivisionById(effectiveDsId) : getDsDivisionForUser(currentUser);
+  const brandTitle = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' && currentDs
+        ? (lang === 'ta' ? currentDs.nameTa : currentDs.nameEn)
+        : (lang === 'ta' ? 'மட்டக்களப்பு மாவட்ட செயலகம்' : 'Batticaloa District Secretariat'))
+    : currentDs
+    ? (lang === 'ta' ? currentDs.nameTa : currentDs.nameEn)
+    : (lang === 'ta' ? 'பிரதேச செயலகம்' : 'DS Office');
+
+  const brandSubtitle = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' && currentDs
+        ? (lang === 'ta' ? `மேற்பார்வை · ${currentDs.allocatedGnCount} GN பிரிவுகள்` : `Oversight · ${currentDs.allocatedGnCount} GN Units`)
+        : (lang === 'ta' ? 'தலைமை அட்மின் தளம்' : 'Apex District Head Admin'))
+    : (lang === 'ta' ? 'ஒருங்கிணைந்த நிர்வாக தளம்' : 'Integrated Admin Portal');
 
   const publicServiceItems = [
     ...(canAccessUniversalSearch
@@ -249,6 +274,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const adminItems = [
+    ...(canAccessDistrict
+      ? [
+          {
+            id: 'district',
+            title: t.districtPortalTitle,
+            subtitle: lang === 'ta' ? '14 பிரதேச செயலகங்கள்' : '14 DS Secretariats Apex',
+            icon: ShieldAlert,
+            badge: lang === 'ta' ? 'மாவட்ட செயலகம்' : 'District HQ',
+          },
+        ]
+      : []),
+    ...(canAccessGnDivisions
+      ? [
+          {
+            id: 'gn-divisions',
+            title: t.gnDivisionsTitle,
+            subtitle: lang === 'ta' ? 'கிராம உத்தியோகத்தர் பிரிவுகள்' : 'GN Divisions Directory',
+            icon: Layers,
+            badge: lang === 'ta' ? 'பிரிவுகள்' : 'GN Units',
+          },
+        ]
+      : []),
     ...(isSuperAdmin
       ? [
           {
@@ -320,10 +367,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {isOpen && (
               <div className="min-w-0 leading-tight">
                 <h1 className="text-xs font-bold text-white tracking-tight truncate">
-                  {lang === 'ta' ? 'வாகரை பிரதேச செயலகம்' : 'DS Vaharai Office'}
+                  {brandTitle}
                 </h1>
                 <p className="text-[10px] text-emerald-400 font-medium truncate">
-                  {lang === 'ta' ? 'ஒருங்கிணைந்த நிர்வாக தளம்' : 'Integrated Admin Portal'}
+                  {brandSubtitle}
                 </p>
               </div>
             )}

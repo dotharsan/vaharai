@@ -32,8 +32,12 @@ import {
   Camera,
   Sparkles,
   Image as ImageIcon,
+  Building2,
+  LayoutDashboard,
+  BarChart3,
+  Shield,
 } from 'lucide-react';
-import { savePetitions, recordDeletedId } from '../services/storage';
+import { savePetitions, recordDeletedId, loadDsDivisions, getDsDivisionById } from '../services/storage';
 import { PetitionLetterScannerModal, ScannedPetitionData } from './PetitionLetterScannerModal';
 
 interface PublicPetitionsViewProps {
@@ -72,13 +76,53 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
   const t = translations[lang];
 
   // RBAC permissions
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
-  const isAdmin = currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2' || isSuperAdmin;
+  const isAdmin = currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2' || isSuperAdmin || isDistrictAdmin;
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const isLandOfficer = currentUser.role === 'LAND_OFFICER';
   const isElderlyOfficer = currentUser.role === 'ELDERLY_OFFICER';
   const isMaternityOfficer = currentUser.role === 'MATERNITY_OFFICER' || currentUser.role === 'ECDO';
   const isDisabilityOfficer = currentUser.role === 'DISABILITY_OFFICER';
+
+  // District Admin sub-views: 'summary' (14 DS Summary Dashboard) | 'district_hq' (District HQ Direct Petitions) | 'all' (All Secretariats Oversight)
+  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'summary' : 'all');
+  const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
+
+  const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
+
+  // District HQ Petitions
+  const districtHqPetitions = useMemo(() => {
+    return petitions.filter(
+      (p) => p.dsDivisionId === 'DISTRICT_HQ' || p.dsDivisionId === 'DISTRICT'
+    );
+  }, [petitions]);
+
+  // 14 DS Summary Breakdown
+  const dsSummaryList = useMemo(() => {
+    return dsDivisionsList.map((ds) => {
+      const dsPets = petitions.filter(
+        (p) => (p.dsDivisionId || 'DS_VAHARAI') === ds.id
+      );
+      const total = dsPets.length;
+      const pending = dsPets.filter((p) => p.status === 'PENDING').length;
+      const inProgress = dsPets.filter(
+        (p) => p.status === 'INQUIRY' || p.status === 'FIELD_INSPECTION'
+      ).length;
+      const resolved = dsPets.filter((p) => p.status === 'RESOLVED').length;
+      const rejected = dsPets.filter((p) => p.status === 'REJECTED').length;
+      const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+      return {
+        ds,
+        total,
+        pending,
+        inProgress,
+        resolved,
+        rejected,
+        resolutionRate,
+      };
+    });
+  }, [dsDivisionsList, petitions]);
 
   // Determine officer's primary department
   const officerDefaultDepartment: PetitionDepartment | 'ALL' = useMemo(() => {
@@ -241,6 +285,7 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
       phone: formPhone.trim(),
       address: formAddress.trim(),
       divisionCode: formDivision,
+      dsDivisionId: isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI'),
       targetDepartment: formDept,
       requestType: formType,
       subject: formSubject.trim(),
@@ -279,6 +324,15 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
   // Filtered List
   const filteredList = useMemo(() => {
     return petitions.filter((p) => {
+      // If District Admin:
+      if (isDistrictAdmin) {
+        if (districtSubView === 'district_hq') {
+          if (p.dsDivisionId !== 'DISTRICT_HQ' && p.dsDivisionId !== 'DISTRICT') return false;
+        } else if (selectedDsFilter !== 'ALL') {
+          if ((p.dsDivisionId || 'DS_VAHARAI') !== selectedDsFilter) return false;
+        }
+      }
+
       // Role enforcement: specific department officers can only see their department
       if (isLandOfficer && p.targetDepartment !== 'LAND') return false;
       if (isElderlyOfficer && p.targetDepartment !== 'ELDERLY') return false;
@@ -306,6 +360,9 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
     });
   }, [
     petitions,
+    isDistrictAdmin,
+    districtSubView,
+    selectedDsFilter,
     isLandOfficer,
     isElderlyOfficer,
     isMaternityOfficer,
@@ -380,10 +437,211 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
             className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>{lang === 'ta' ? 'புதிய மனு பதிவு' : 'Register New Petition'}</span>
+            <span>{isDistrictAdmin ? (lang === 'ta' ? 'புதிய மாவட்ட மனு பதிவு' : 'Register District Petition') : (lang === 'ta' ? 'புதிய மனு பதிவு' : 'Register New Petition')}</span>
           </button>
         </div>
       </div>
+
+      {/* District Admin Mode Navigation & Sub-Tabs */}
+      {isDistrictAdmin && (
+        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-emerald-800" />
+              <span className="text-xs font-bold text-slate-800">
+                {lang === 'ta' ? 'மாவட்ட செயலகக் கட்டுப்பாட்டகம் (District HQ Control Center)' : 'District HQ Grievances Control Center'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {lang === 'ta' ? 'மாவட்ட நேரடிப் பதிவுகள் & 14 பிரதேச செயலகங்கள் சுருக்கம்' : 'Direct HQ records & 14 Secretariats Summary'}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setDistrictSubView('summary');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'summary'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சுருக்கம்' : '14 DS Summary Board'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('district_hq');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'district_hq'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாவட்ட செயலக நேரடி மனுக்கள்' : 'District HQ Petitions'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'district_hq' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {districtHqPetitions.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('all');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'all'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'அனைத்து மனுக்கள் மேற்பார்வை' : 'All Secretariats Oversight'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'all' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {petitions.length}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 14 DS Petitions Summary Control Board (When District Admin is in 'summary' view) */}
+      {isDistrictAdmin && districtSubView === 'summary' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          {/* Top 4 Summary Metric Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'பிரதேச செயலகங்கள்' : 'DS Divisions'}</div>
+              <div className="text-xl font-black text-slate-900 mt-0.5">{dsDivisionsList.length}</div>
+              <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">{lang === 'ta' ? 'முழு மாவட்டமும்' : 'Entire District'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-xs bg-amber-50/30">
+              <div className="text-[11px] font-bold text-amber-800">{lang === 'ta' ? 'நிலுவையில் (Pending)' : 'Total Pending'}</div>
+              <div className="text-xl font-black text-amber-900 mt-0.5">
+                {dsSummaryList.reduce((acc, d) => acc + d.pending, 0)}
+              </div>
+              <div className="text-[10px] text-amber-700 mt-0.5">{lang === 'ta' ? 'விசாரணைக்குரியவை' : 'Awaiting Inquiry'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+              <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'விசாரணையில் (Inquiry/Field)' : 'In Progress'}</div>
+              <div className="text-xl font-black text-blue-900 mt-0.5">
+                {dsSummaryList.reduce((acc, d) => acc + d.inProgress, 0)}
+              </div>
+              <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? 'கள ஆய்வு நடப்பில்' : 'Field Assessment'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+              <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? 'தீர்க்கப்பட்டது (Resolved)' : 'Resolved'}</div>
+              <div className="text-xl font-black text-emerald-900 mt-0.5">
+                {dsSummaryList.reduce((acc, d) => acc + d.resolved, 0)}
+              </div>
+              <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'உத்தியோகபூர்வ தீர்வு' : 'Officially Closed'}</div>
+            </div>
+          </div>
+
+          {/* 14 DS Summary Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-emerald-800" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  {lang === 'ta' ? '14 பிரதேச செயலகங்கள் கோரிக்கை & முறைப்பாடு நிலைவர சுருக்கம்' : '14 Divisional Secretariats Grievances Summary'}
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-500 font-mono">
+                {dsDivisionsList.length} Divisions
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-4"># குறியீடு</th>
+                    <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம் & தலைமையகம்' : 'DS Division & HQ'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த மனுக்கள்' : 'Total'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'நிலுவை' : 'Pending'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'விசாரணை / ஆய்வு' : 'Inquiry'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தீர்க்கப்பட்டது' : 'Resolved'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தீர்வு விகிதம்' : 'Rate %'}</th>
+                    <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'மேற்பார்வை' : 'Action'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dsSummaryList.map((item) => (
+                    <tr key={item.ds.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-500">{item.ds.code}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 text-sm">
+                          {lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {item.ds.headquartersTa || item.ds.headquartersEn || item.ds.nameEn}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="font-bold text-slate-900 text-sm">{item.total}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                          {item.pending}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
+                          {item.inProgress}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          {item.resolved}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <div className="w-16 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="bg-emerald-600 h-full rounded-full"
+                              style={{ width: `${item.resolutionRate}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-[10px] font-bold text-slate-700">
+                            {item.resolutionRate}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedDsFilter(item.ds.id);
+                            setDistrictSubView('all');
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 rounded-lg border border-slate-200 transition-colors text-xs font-semibold flex items-center gap-1 cursor-pointer ml-auto"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regular View Or District HQ / All Oversight View */}
+      {(!isDistrictAdmin || districtSubView !== 'summary') && (
+        <div className="space-y-6">
 
       {/* Status Highlights */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -456,6 +714,23 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
             ))}
           </select>
 
+          {/* DS Division Filter for District Admin */}
+          {isDistrictAdmin && districtSubView === 'all' && (
+            <select
+              value={selectedDsFilter}
+              onChange={(e) => setSelectedDsFilter(e.target.value)}
+              className="px-2.5 py-2 text-xs border border-emerald-300 rounded-lg bg-emerald-50 text-emerald-950 font-semibold"
+            >
+              <option value="ALL">{lang === 'ta' ? 'அனைத்துப் பிரதேச செயலகங்களும்' : 'All DS Secretariats'}</option>
+              <option value="DISTRICT_HQ">🏢 {lang === 'ta' ? 'மாவட்ட செயலகம் (District HQ)' : 'District HQ'}</option>
+              {dsDivisionsList.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.code} - {lang === 'ta' ? d.nameTa : d.nameEn}
+                </option>
+              ))}
+            </select>
+          )}
+
           {/* Division Filter */}
           {!isGramaNiladhari && (
             <select
@@ -463,7 +738,7 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
               onChange={(e) => setSelectedDivision(e.target.value)}
               className="px-2.5 py-2 text-xs border border-slate-300 rounded-lg bg-white"
             >
-              <option value="ALL">{t.allDivisions} (16 Divisions)</option>
+              <option value="ALL">{t.allDivisions} ({divisions.length} Divisions)</option>
               {divisions.map((d) => (
                 <option key={d.code} value={d.code}>
                   {d.code} - {d.nameTa}
@@ -683,6 +958,8 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
           </table>
         </div>
       </div>
+        </div>
+      )}
 
       {/* Modal: Register New Petition / Complaint */}
       {showAddModal && (

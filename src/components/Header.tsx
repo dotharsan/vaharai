@@ -1,5 +1,4 @@
-import React from 'react';
-import { User } from '../types';
+import { User, BATTICALOA_DS_DIVISIONS } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { VaharaiLogo } from './VaharaiLogo';
 import {
@@ -10,8 +9,10 @@ import {
   RefreshCw,
   Tv,
   CheckCircle2,
+  Building2,
 } from 'lucide-react';
 import { DriveSyncStatus } from '../services/googleDrive';
+import { getDsDivisionById } from '../services/storage';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -29,6 +30,8 @@ interface HeaderProps {
   onSaveToDriveNow: () => void;
   onOpenStorageTransparency?: () => void;
   onOpenOfficeLayout?: () => void;
+  selectedDsDivisionId?: string;
+  onSelectDsDivision?: (dsId: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,13 +50,31 @@ export const Header: React.FC<HeaderProps> = ({
   onSaveToDriveNow,
   onOpenStorageTransparency,
   onOpenOfficeLayout,
+  selectedDsDivisionId,
+  onSelectDsDivision,
 }) => {
   const t = translations[lang];
   const isNormal = currentUser?.role === 'NORMAL';
+  const isDistrictAdmin = currentUser?.role === 'DISTRICT_ADMIN';
+
+  const effectiveDsId = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' ? selectedDsDivisionId : null)
+    : (currentUser?.dsDivisionId || 'DS_VAHARAI');
+  const userDs = effectiveDsId ? getDsDivisionById(effectiveDsId) : null;
+
+  const portalName = isDistrictAdmin
+    ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' && userDs
+        ? (lang === 'ta' ? `மாவட்ட செயலகம் · ${userDs.nameTa}` : `District HQ · ${userDs.nameEn}`)
+        : (lang === 'ta' ? 'மட்டக்களப்பு மாவட்ட செயலகம்' : 'Batticaloa District Secretariat'))
+    : (userDs ? (lang === 'ta' ? `${userDs.nameTa} பிரதேச செயலகம்` : `${userDs.nameEn} Divisional Secretariat`) : (lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'));
 
   // Get active tab display name
   const getTabLabel = (tab: string) => {
     switch (tab) {
+      case 'district':
+        return t.districtPortalTitle;
+      case 'gn-divisions':
+        return t.gnDivisionsTitle;
       case 'dashboard':
         return t.navDashboard;
       case 'beneficiaries':
@@ -74,6 +95,18 @@ export const Header: React.FC<HeaderProps> = ({
         return t.navAiReport;
       case 'service-audit':
         return lang === 'ta' ? 'சேவை தணிக்கை' : 'Service Audit';
+      case 'land':
+        return lang === 'ta' ? 'காணி பிரிவு முகாமைத்துவம்' : 'Land Management';
+      case 'maternity':
+        return lang === 'ta' ? 'கர்ப்பிணித் தாய்மார் & போசணை முத்திரை' : 'Nutrition Stamps';
+      case 'elderly':
+        return lang === 'ta' ? 'முதியோர் நலன்புரி' : 'Elderly Welfare';
+      case 'disability':
+        return lang === 'ta' ? 'மாற்றுத்திறனாளிகள் நலன்புரி' : 'Disability Rights';
+      case 'family-center':
+        return lang === 'ta' ? 'குடும்ப தரவு மையம்' : 'Family Data Center';
+      case 'petitions':
+        return lang === 'ta' ? 'பொதுமக்கள் மனுக்கள்' : 'Public Petitions';
       default:
         return tab;
     }
@@ -133,7 +166,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs sm:text-sm font-bold text-slate-900 tracking-tight truncate max-w-[150px] sm:max-w-[220px] md:max-w-none">
-                  {lang === 'ta' ? 'வாகரை பிரதேச செயலகம்' : 'Koralaipattu North DS'}
+                  {portalName}
                 </span>
                 <span className="text-slate-300 hidden md:inline">/</span>
                 <span className="text-xs font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 hidden md:inline-flex items-center gap-1">
@@ -143,6 +176,25 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Division Switcher for District Admin */}
+        {isDistrictAdmin && onSelectDsDivision && (
+          <div className="hidden lg:flex items-center gap-1.5 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+            <Building2 className="w-3.5 h-3.5 text-emerald-800" />
+            <select
+              value={selectedDsDivisionId || 'ALL'}
+              onChange={(e) => onSelectDsDivision(e.target.value)}
+              className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">{lang === 'ta' ? 'அனைத்து 14 பிரதேசங்களும் (District View)' : 'All 14 DS Divisions'}</option>
+              {BATTICALOA_DS_DIVISIONS.map((ds) => (
+                <option key={ds.id} value={ds.id}>
+                  {ds.code} - {lang === 'ta' ? ds.nameTa : ds.nameEn}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Center: Live Google Drive & Central Database Status Pill */}
         {currentUser && !isNormal && (

@@ -49,9 +49,10 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
   const t = translations[lang];
 
   // Role separation check
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const officerDivision = isGramaNiladhari ? currentUser.division || '211' : '';
-  const canDelete = currentUser.role === 'SUPERADMIN' || currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2';
+  const canDelete = !isDistrictAdmin && (currentUser.role === 'SUPERADMIN' || currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2');
 
   // Specialized Officer Roles
   const isECDO = currentUser.role === 'ECDO';
@@ -523,10 +524,22 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                 ? `தகவல் மட்டுப்பாடு: தங்களுக்கு ஒதுக்கப்பட்ட (${officerDivision}) பிரிவு பிரஜைகளின் விபரங்கள் மட்டுமே பார்வைக்கு உண்டு.`
                 : `Role-restricted: Showing citizen data exclusively for your assigned GN division (${officerDivision}).`
               : lang === 'ta'
-              ? 'வாகரையின் 16 கிராம அலுவலர் பிரிவுகளின் பிரஜைகள், நாள்பட்ட நோயாளர்கள், மற்றும் 16 வயது இளைஞர்கள் பதிவேடு.'
-              : 'Complete registry covering 16 GN divisions with chronic medical tracking and age 16 NIC youth filters.'}
+              ? 'பிரதேச செயலக கிராம அலுவலர் பிரிவுகளின் பிரஜைகள், நாள்பட்ட நோயாளர்கள், மற்றும் 16 வயது இளைஞர்கள் பதிவேடு.'
+              : 'Divisional citizen registry with chronic medical tracking and age 16 NIC youth filters.'}
           </p>
         </div>
+
+        {isDistrictAdmin && (
+          <div className="w-full bg-sky-50 border border-sky-200 text-sky-900 rounded-xl p-3 text-xs flex items-center justify-between gap-3 mt-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🏛️</span>
+              <div>
+                <strong>{lang === 'ta' ? 'மாவட்ட செயலக மேற்பார்வை முறைமை (Oversight Mode):' : 'District Secretariat Oversight Mode:'}</strong>{' '}
+                <span>{lang === 'ta' ? 'மேற்பார்வை, தேடல், வடிகட்டல் மற்றும் அறிக்கை அச்சிடல் வசதிகள் மட்டுமே இயக்கத்தில் உள்ளன. புதிய பிரஜைகளை சேர்த்தல் மற்றும் மாற்றங்களை குறித்த பிரதேச செயலக சுப்பர் அட்மின் மட்டுமே மேற்கொள்ள முடியும்.' : 'View, search, filter and print reports are enabled. Adding new citizens or modifying records is strictly restricted to Divisional Super Admins.'}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-2 flex-wrap">
           {selectedIds.size > 0 && canDelete && (
@@ -539,7 +552,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
             </button>
           )}
 
-          {isSuperAdmin && (
+          {isSuperAdmin && !isDistrictAdmin && (
             <button
               onClick={handleClearAllBeneficiaries}
               className="px-3.5 py-2 bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-800 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
@@ -552,19 +565,21 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
 
           <button
             onClick={() => setShowPdfReportModal(true)}
-            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
           >
             <span>📄</span>
             <span>{t.printPdfReport}</span>
           </button>
 
-          <button
-            onClick={handleOpenAdd}
-            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
-          >
-            <span>➕</span>
-            <span>{t.addBeneficiary}</span>
-          </button>
+          {!isDistrictAdmin && (
+            <button
+              onClick={handleOpenAdd}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+            >
+              <span>➕</span>
+              <span>{t.addBeneficiary}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -947,13 +962,15 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                             👨‍👩‍👧‍👦 {lang === 'ta' ? 'குடும்பம்' : 'Family'}
                           </button>
                         )}
-                        <button
-                          onClick={() => handleOpenStatusModal(b)}
-                          className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded font-medium text-[11px] transition-colors border border-amber-200"
-                          title={lang === 'ta' ? 'மரணப்பதிவு / பதிவுமாற்றம்' : 'Deceased / Transfer Status'}
-                        >
-                          📜 {lang === 'ta' ? 'நிலை' : 'Status'}
-                        </button>
+                        {!isDistrictAdmin && (
+                          <button
+                            onClick={() => handleOpenStatusModal(b)}
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded font-medium text-[11px] transition-colors border border-amber-200"
+                            title={lang === 'ta' ? 'மரணப்பதிவு / பதிவுமாற்றம்' : 'Deceased / Transfer Status'}
+                          >
+                            📜 {lang === 'ta' ? 'நிலை' : 'Status'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setViewingCardBeneficiary(b)}
                           className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded font-medium text-[11px] transition-colors"
@@ -961,12 +978,14 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                         >
                           🪪 {lang === 'ta' ? 'அட்டை' : 'Pass'}
                         </button>
-                        <button
-                          onClick={() => handleOpenEdit(b)}
-                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium text-[11px] transition-colors"
-                        >
-                          ✏️
-                        </button>
+                        {!isDistrictAdmin && (
+                          <button
+                            onClick={() => handleOpenEdit(b)}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-medium text-[11px] transition-colors"
+                          >
+                            ✏️
+                          </button>
+                        )}
                         {canDelete && (
                           <button
                             onClick={() => handleDelete(b)}
