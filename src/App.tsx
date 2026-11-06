@@ -432,7 +432,7 @@ export default function App() {
   };
 
   const handleUpdateBeneficiaries = (newItems: Beneficiary[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setBeneficiaries(newItems);
       saveBeneficiaries(newItems);
     } else {
@@ -448,7 +448,7 @@ export default function App() {
   };
 
   const handleUpdateTokens = (newTokens: QueueToken[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setTokens(newTokens);
       saveTokens(newTokens);
     } else {
@@ -464,7 +464,7 @@ export default function App() {
   };
 
   const handleUpdateAssistanceRecords = (newRecords: AssistanceRecord[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setAssistanceRecords(newRecords);
       saveAssistanceRecords(newRecords);
     } else {
@@ -485,7 +485,7 @@ export default function App() {
   };
 
   const handleUpdatePregnantMothers = (newRecords: PregnantMotherRecord[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setPregnantMothers(newRecords);
       savePregnantMothers(newRecords);
     } else {
@@ -501,7 +501,7 @@ export default function App() {
   };
 
   const handleUpdateLandRecords = (newLand: LandRecord[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setLandRecords(newLand);
       saveLandRecords(newLand);
     } else {
@@ -517,7 +517,7 @@ export default function App() {
   };
 
   const handleUpdateHouseholds = (newHouseholds: HouseholdData[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setHouseholds(newHouseholds);
       saveHouseholds(newHouseholds);
     } else {
@@ -538,7 +538,7 @@ export default function App() {
   };
 
   const handleUpdatePetitions = (newPetitions: PublicPetition[]) => {
-    if (!activeTenantDsId) {
+    if (isDistrictAdmin || !activeTenantDsId) {
       setPetitions(newPetitions);
       savePetitions(newPetitions);
     } else {
@@ -864,6 +864,7 @@ export default function App() {
             tokens={tokens}
             petitions={petitions}
             households={households}
+            pregnantMothers={pregnantMothers}
             lang={lang}
             onUpdateUsers={handleUpdateUsers}
             onAuditLog={handleAuditLog}
@@ -913,8 +914,8 @@ export default function App() {
 
         {safeTab === 'elderly' && (
           <ElderlyOfficerManagementView
-            beneficiaries={scopedBeneficiaries}
-            divisions={scopedDivisions}
+            beneficiaries={isDistrictAdmin ? beneficiaries : scopedBeneficiaries}
+            divisions={isDistrictAdmin ? divisions : scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -924,8 +925,8 @@ export default function App() {
 
         {safeTab === 'maternity' && (
           <PregnantMothersView
-            pregnantMothers={scopedPregnantMothers}
-            divisions={scopedDivisions}
+            pregnantMothers={isDistrictAdmin ? pregnantMothers : scopedPregnantMothers}
+            divisions={isDistrictAdmin ? divisions : scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdatePregnantMothers={handleUpdatePregnantMothers}
@@ -935,8 +936,8 @@ export default function App() {
 
         {safeTab === 'disability' && (
           <DisabilityOfficerManagementView
-            beneficiaries={scopedBeneficiaries}
-            divisions={scopedDivisions}
+            beneficiaries={isDistrictAdmin ? beneficiaries : scopedBeneficiaries}
+            divisions={isDistrictAdmin ? divisions : scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
@@ -946,8 +947,8 @@ export default function App() {
 
         {safeTab === 'petitions' && (
           <PublicPetitionsView
-            petitions={scopedPetitions}
-            divisions={scopedDivisions}
+            petitions={isDistrictAdmin ? petitions : scopedPetitions}
+            divisions={isDistrictAdmin ? divisions : scopedDivisions}
             currentUser={currentUser}
             lang={lang}
             onUpdatePetitions={handleUpdatePetitions}

@@ -62,7 +62,15 @@ export default function handler(req: any, res: any) {
     }
 
     if (req.method === 'POST') {
-      const snapshot = req.body;
+      const rawBody = req.body;
+      let snapshot = rawBody;
+      if (typeof rawBody === 'string') {
+        try {
+          snapshot = JSON.parse(rawBody);
+        } catch {
+          return res.status(400).json({ success: false, error: 'Malformed JSON payload' });
+        }
+      }
       if (!snapshot || !Array.isArray(snapshot.beneficiaries) || !Array.isArray(snapshot.users)) {
         return res.status(400).json({ success: false, error: 'Invalid database snapshot format' });
       }

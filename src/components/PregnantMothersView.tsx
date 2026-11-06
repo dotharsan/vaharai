@@ -19,6 +19,7 @@ import {
   clearAllPregnantMothersPermanently,
   recordDeletedId,
   savePregnantMothers,
+  loadDsDivisions,
 } from '../services/storage';
 import { downloadCsvFile, escapeCsv, getRelationshipTamilLabel, generateHistoricalPregnantMothersSampleCsv, parsePregnantMothersFromCsv } from '../services/csv';
 import {
@@ -42,6 +43,10 @@ import {
   ArrowRight,
   Sparkles,
   Trash2,
+  Building2,
+  BarChart3,
+  Shield,
+  Eye,
 } from 'lucide-react';
 
 interface PregnantMothersViewProps {
@@ -65,8 +70,44 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
   // Role separation
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const officerDivision = isGramaNiladhari ? currentUser.division || '211' : '';
+
+  // District Admin sub-views: 'district_hq' (District HQ Direct) | 'summary' (14 DS Summary) | 'all' (All Secretariats)
+  const [districtSubView, setDistrictSubView] = useState<'district_hq' | 'summary' | 'all'>(isDistrictAdmin ? 'district_hq' : 'all');
+  const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
+
+  const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
+
+  // District HQ direct records
+  const districtHqMothers = useMemo(() => {
+    return pregnantMothers.filter(
+      (m) => m.dsDivisionId === 'DISTRICT_HQ' || m.dsDivisionId === 'DISTRICT'
+    );
+  }, [pregnantMothers]);
+
+  // 14 DS Maternity Summary Breakdown
+  const dsPregnantSummaryList = useMemo(() => {
+    return dsDivisionsList.map((ds) => {
+      const dsList = pregnantMothers.filter(
+        (m) => (m.dsDivisionId || 'DS_VAHARAI') === ds.id
+      );
+      const total = dsList.length;
+      const active = dsList.filter((m) => m.status === 'ACTIVE_COLLECTING' && !m.isCompleted).length;
+      const waiting = dsList.filter((m) => m.status === 'WAITING_STAMP' && !m.isCompleted).length;
+      const completed = dsList.filter((m) => m.isCompleted || m.status === 'COMPLETED').length;
+      const totalValueLkr = dsList.reduce((acc, m) => acc + (Number(m.stampValue) || 4500), 0);
+      return {
+        ds,
+        total,
+        active,
+        waiting,
+        completed,
+        totalValueLkr,
+      };
+    });
+  }, [dsDivisionsList, pregnantMothers]);
 
   // Super Admin: Wipe all pregnant mother records
   const handleClearAllMothers = () => {
@@ -247,7 +288,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
   };
 
   const handleOpenAddModal = () => {
-    const div = isGramaNiladhari ? officerDivision : '211';
+    const div = isDistrictAdmin ? 'DISTRICT_HQ' : isGramaNiladhari ? officerDivision : '211';
     setFormName('');
     setFormNic('');
     setFormDivision(div);
@@ -293,6 +334,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
       name: formName.trim(),
       nic: cleanNic,
       divisionCode: formDivision,
+      dsDivisionId: isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI'),
       familyCode: famCode,
       familyRelationship: formFamilyRelationship,
       welfareSchemes: formWelfareSchemes,
@@ -421,9 +463,18 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
   // Filtered dataset
   const filteredMothers = useMemo(() => {
     return pregnantMothers.filter((m) => {
+      // District Admin filter
+      if (isDistrictAdmin) {
+        if (districtSubView === 'district_hq') {
+          if (m.dsDivisionId !== 'DISTRICT_HQ' && m.dsDivisionId !== 'DISTRICT') return false;
+        } else if (selectedDsFilter !== 'ALL') {
+          if ((m.dsDivisionId || 'DS_VAHARAI') !== selectedDsFilter) return false;
+        }
+      }
+
       // 1. Division
       if (isGramaNiladhari && m.divisionCode !== officerDivision) return false;
-      if (!isGramaNiladhari && selectedDivision !== 'ALL' && m.divisionCode !== selectedDivision) return false;
+      if (!isGramaNiladhari && !isDistrictAdmin && selectedDivision !== 'ALL' && m.divisionCode !== selectedDivision) return false;
 
       // 2. Working View Tab
       if (activeTab === 'WAITING' && (m.status !== 'WAITING_STAMP' || m.isCompleted)) return false;
@@ -443,7 +494,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
       return true;
     });
-  }, [pregnantMothers, isGramaNiladhari, officerDivision, selectedDivision, activeTab, searchQuery]);
+  }, [pregnantMothers, isDistrictAdmin, districtSubView, selectedDsFilter, isGramaNiladhari, officerDivision, selectedDivision, activeTab, searchQuery]);
 
   // Overall counts for tabs
   const tabCounts = useMemo(() => {
@@ -453,6 +504,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
     pregnantMothers.forEach((m) => {
       if (isGramaNiladhari && m.divisionCode !== officerDivision) return;
+      if (isDistrictAdmin && districtSubView === 'district_hq' && m.dsDivisionId !== 'DISTRICT_HQ' && m.dsDivisionId !== 'DISTRICT') return;
       if (m.isCompleted || m.status === 'COMPLETED') {
         completed++;
       } else if (m.status === 'WAITING_STAMP' || !m.stampNumber) {
@@ -463,7 +515,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     });
 
     return { waiting, active, completed };
-  }, [pregnantMothers, isGramaNiladhari, officerDivision]);
+  }, [pregnantMothers, isGramaNiladhari, officerDivision, isDistrictAdmin, districtSubView]);
 
   // Export CSV
   const handleExportCsv = () => {
@@ -543,22 +595,26 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap no-print">
-          <button
-            type="button"
-            onClick={() => setShowHistoryUploadModal(true)}
-            className="px-3.5 py-2 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-            title={lang === 'ta' ? 'கடந்த 3 வருடங்களில் நிறைவுற்ற தாய்மார் பதிவுகளை CSV மூலம் அப்லோட் செய்' : 'Upload past 3-year completed mothers CSV'}
-          >
-            <Upload className="w-4 h-4" />
-            <span>{lang === 'ta' ? 'கடந்த 3 வருட நிறைவு CSV அப்லோட்' : 'Upload 3-Yr Completed CSV'}</span>
-          </button>
-          <button
-            onClick={handleExportCsv}
-            className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>CSV</span>
-          </button>
+          {!isDistrictAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowHistoryUploadModal(true)}
+              className="px-3.5 py-2 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+              title={lang === 'ta' ? 'கடந்த 3 வருடங்களில் நிறைவுற்ற தாய்மார் பதிவுகளை CSV மூலம் அப்லோட் செய்' : 'Upload past 3-year completed mothers CSV'}
+            >
+              <Upload className="w-4 h-4" />
+              <span>{lang === 'ta' ? 'கடந்த 3 வருட நிறைவு CSV அப்லோட்' : 'Upload 3-Yr Completed CSV'}</span>
+            </button>
+          )}
+          {!isDistrictAdmin && (
+            <button
+              onClick={handleExportCsv}
+              className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>CSV</span>
+            </button>
+          )}
           <button
             onClick={handlePrint}
             className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -566,7 +622,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
             <Printer className="w-4 h-4" />
             <span>{lang === 'ta' ? 'அறிக்கை அச்சிடுக' : 'Print Register'}</span>
           </button>
-          {isSuperAdmin && pregnantMothers.length > 0 && (
+          {!isDistrictAdmin && isSuperAdmin && pregnantMothers.length > 0 && (
             <button
               type="button"
               onClick={handleClearAllMothers}
@@ -582,13 +638,202 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
             className="px-4 py-2 text-xs font-bold rounded-lg bg-pink-700 hover:bg-pink-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>{lang === 'ta' ? 'புதிய தாய் பதிவு' : 'Register Pregnant Mother'}</span>
+            <span>{isDistrictAdmin ? (lang === 'ta' ? 'மாவட்ட நேரடித் தாய் பதிவு' : 'Register District Mother') : (lang === 'ta' ? 'புதிய தாய் பதிவு' : 'Register Pregnant Mother')}</span>
           </button>
         </div>
       </div>
 
-      {/* 3 Working View Navigation Tabs */}
-      <div className="flex border-b border-slate-200 gap-2">
+      {/* District Admin Mode Navigation & Sub-Tabs */}
+      {isDistrictAdmin && (
+        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-emerald-800" />
+              <span className="text-xs font-bold text-slate-800">
+                {lang === 'ta' ? 'மாவட்ட செயலகக் கட்டுப்பாட்டகம் · கர்ப்பிணித் தாய்மார் போசணை' : 'District HQ Control Center · Maternity Nutrition Welfare'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {lang === 'ta' ? 'மாவட்ட நேரடிப் பதிவுகள் & 14 பிரதேச செயலகங்கள் சமறி' : 'District HQ Records & 14 Secretariats Summary'}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setDistrictSubView('district_hq');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'district_hq'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாவட்ட செயலக நேரடித் தாய்மார்' : 'District HQ Direct Records'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'district_hq' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {districtHqMothers.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('summary');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'summary'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சமறி' : '14 DS Summary Board'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('all');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'all'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'அனைத்து தாய்மார் மேற்பார்வை' : 'All Secretariats Oversight'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'all' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {pregnantMothers.length}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 14 DS Maternity Summary Control Board */}
+      {isDistrictAdmin && districtSubView === 'summary' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'பிரதேச செயலகங்கள்' : 'DS Divisions'}</div>
+              <div className="text-xl font-black text-slate-900 mt-0.5">{dsDivisionsList.length}</div>
+              <div className="text-[10px] text-emerald-600 font-semibold mt-0.5">{lang === 'ta' ? 'முழு மாவட்டம்' : 'District Total'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-pink-200 shadow-xs bg-pink-50/30">
+              <div className="text-[11px] font-bold text-pink-800">{lang === 'ta' ? 'மாதாந்த விநியோகம் (செயலில்)' : 'Active Receiving'}</div>
+              <div className="text-xl font-black text-pink-950 mt-0.5">
+                {dsPregnantSummaryList.reduce((acc, d) => acc + d.active, 0)}
+              </div>
+              <div className="text-[10px] text-pink-700 mt-0.5">{lang === 'ta' ? '10 மாத முத்திரை பெறுவோர்' : 'Active Vouchers'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-xs bg-amber-50/30">
+              <div className="text-[11px] font-bold text-amber-800">{lang === 'ta' ? 'முத்திரைக்காக காத்திருப்போர்' : 'Waiting Allocation'}</div>
+              <div className="text-xl font-black text-amber-900 mt-0.5">
+                {dsPregnantSummaryList.reduce((acc, d) => acc + d.waiting, 0)}
+              </div>
+              <div className="text-[10px] text-amber-700 mt-0.5">{lang === 'ta' ? 'ஒதுக்கீடு செய்யப்பட வேண்டியோர்' : 'Pending Allocation'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+              <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? '10 மாத நிறைவு பெற்றோர்' : 'Completed (10 Months)'}</div>
+              <div className="text-xl font-black text-emerald-900 mt-0.5">
+                {dsPregnantSummaryList.reduce((acc, d) => acc + d.completed, 0)}
+              </div>
+              <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'வெற்றிகரமாக முடித்த தாய்மார்' : 'Completed Cycles'}</div>
+            </div>
+          </div>
+
+          {/* 14 DS Breakdown Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-emerald-800" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  {lang === 'ta' ? '14 பிரதேச செயலகங்கள் கர்ப்பிணித் தாய்மார் போசணை நிலைவர சுருக்கம்' : '14 DS Maternity & Nutrition Welfare Summary'}
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-500 font-mono">
+                {dsDivisionsList.length} Secretariats
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-4"># குறியீடு</th>
+                    <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம் & தலைமையகம்' : 'DS Division & HQ'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த தாய்மார்' : 'Total'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'செயலில் விநியோகம்' : 'Active'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'காத்திருப்போர்' : 'Waiting'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? '10 மாத நிறைவு' : 'Completed'}</th>
+                    <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'மதிப்பீட்டு நிதி (ரூபா)' : 'Total LKR'}</th>
+                    <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dsPregnantSummaryList.map((item) => (
+                    <tr key={item.ds.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-500">{item.ds.code}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 text-sm">
+                          {lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {item.ds.headquartersTa || item.ds.headquartersEn || item.ds.nameEn}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="font-bold text-slate-900 text-sm">{item.total}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-100 text-pink-900 border border-pink-200">
+                          {item.active}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                          {item.waiting}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          {item.completed}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                        Rs. {item.totalValueLkr.toLocaleString()}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedDsFilter(item.ds.id);
+                            setDistrictSubView('all');
+                          }}
+                          className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition-colors cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>{lang === 'ta' ? 'பார்' : 'View'}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Working View (shown when not in District Summary mode) */}
+      {(!isDistrictAdmin || districtSubView !== 'summary') && (
+        <>
+          {/* 3 Working View Navigation Tabs */}
+          <div className="flex border-b border-slate-200 gap-2">
         <button
           onClick={() => setActiveTab('WAITING')}
           className={`pb-3 px-4 text-xs font-bold transition-colors border-b-2 flex items-center gap-2 cursor-pointer ${
@@ -869,6 +1114,8 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* Modal: Register New Pregnant Mother */}
       {showAddModal && (

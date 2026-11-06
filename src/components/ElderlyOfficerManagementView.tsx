@@ -63,8 +63,8 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const officerDivision = isGramaNiladhari ? currentUser.division || '211' : '';
 
-  // District Admin sub-views: 'summary' (14 DS Summary Dashboard) | 'district_hq' (District HQ Records) | 'all' (All Secretariats Oversight)
-  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'summary' : 'all');
+  // District Admin sub-views: 'district_hq' (District HQ Records) | 'summary' (14 DS Summary Dashboard) | 'all' (All Secretariats Oversight)
+  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'district_hq' : 'all');
   const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
 
   const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
@@ -76,6 +76,13 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
       return b.isElderly || age >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus;
     });
   }, [beneficiaries]);
+
+  // District HQ Senior Citizens
+  const districtHqElderly = useMemo(() => {
+    return elderlyCitizens.filter(
+      (b) => b.dsDivisionId === 'DISTRICT_HQ' || b.dsDivisionId === 'DISTRICT'
+    );
+  }, [elderlyCitizens]);
 
   // 14 DS Elderly Summary Breakdown
   const dsElderlySummaryList = useMemo(() => {
@@ -288,6 +295,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
       phone: formPhone.trim(),
       address: formAddress.trim(),
       divisionCode: formDivision,
+      dsDivisionId: editingElderly?.dsDivisionId || (isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI')),
       familyHead: editingElderly ? editingElderly.familyHead : (formFamilyRelationship === 'HEAD'),
       householdNo: editingElderly?.householdNo || `HH-${formDivision}-001`,
       familyCode: famCode,
@@ -509,15 +517,13 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
               <span>{lang === 'ta' ? 'அனைத்து முதியோரையும் அழி' : 'Clear All Elderly'}</span>
             </button>
           )}
-          {!isDistrictAdmin && (
-            <button
-              onClick={handleOpenAddModal}
-              className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>{lang === 'ta' ? 'புதிய முதியோர் பதிவு' : 'Register Senior Citizen'}</span>
-            </button>
-          )}
+          <button
+            onClick={handleOpenAddModal}
+            className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>{isDistrictAdmin ? (lang === 'ta' ? 'மாவட்ட முதியோர் பதிவு' : 'Register District Senior') : (lang === 'ta' ? 'புதிய முதியோர் பதிவு' : 'Register Senior Citizen')}</span>
+          </button>
         </div>
       </div>
 
@@ -532,11 +538,29 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
               </span>
             </div>
             <div className="text-[11px] text-slate-500">
-              {lang === 'ta' ? '14 பிரதேச செயலகங்களின் முதியோர் நிலைவரச் சுருக்கம்' : '14 Secretariats Senior Citizens Summary'}
+              {lang === 'ta' ? 'மாவட்ட நேரடிப் பதிவுகள் & 14 பிரதேச செயலகங்கள் சமறி' : 'District HQ Records & 14 Secretariats Summary'}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setDistrictSubView('district_hq');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'district_hq'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாவட்ட செயலக நேரடி முதியோர்' : 'District HQ Direct Records'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'district_hq' ? 'bg-emerald-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {districtHqElderly.length}
+              </span>
+            </button>
+
             <button
               onClick={() => {
                 setDistrictSubView('summary');
@@ -549,7 +573,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சுருக்கம்' : '14 DS Summary Board'}</span>
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சமறி' : '14 DS Summary Board'}</span>
             </button>
 
             <button

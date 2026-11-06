@@ -19,9 +19,10 @@ import {
   deleteSingleBeneficiary,
   recordDeletedId,
   saveBeneficiaries,
+  loadDsDivisions,
 } from '../services/storage';
 import { downloadCsvFile, parseCsvContent, escapeCsv, getRelationshipTamilLabel } from '../services/csv';
-import { Accessibility, Plus, Upload, Download, Search, FileText, CheckCircle2, AlertTriangle, ShieldCheck, Printer, Trash2 } from 'lucide-react';
+import { Accessibility, Plus, Upload, Download, Search, FileText, CheckCircle2, AlertTriangle, ShieldCheck, Printer, Trash2, Building2, BarChart3, Eye, Shield } from 'lucide-react';
 import { BeneficiaryIdCardModal } from './BeneficiaryIdCardModal';
 
 interface DisabilityOfficerManagementViewProps {
@@ -114,7 +115,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   };
 
   const handleOpenAddModal = () => {
-    const div = '211';
+    const div = isDistrictAdmin ? 'DISTRICT_HQ' : '211';
     const famCode = generateUniqueFamilyCode(div, Math.floor(Math.random() * 800 + 100));
     setFormDivision(div);
     setFormFamilyQr(generateUniqueFamilyQrPayload(famCode, div));
@@ -131,6 +132,48 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   };
 
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
+
+  // District Admin sub-views: 'district_hq' (District HQ Direct) | 'summary' (14 DS Summary) | 'all' (All Secretariats)
+  const [districtSubView, setDistrictSubView] = useState<'district_hq' | 'summary' | 'all'>(isDistrictAdmin ? 'district_hq' : 'all');
+  const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
+
+  const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
+
+  // District HQ Disability Registrations
+  const districtHqDisability = useMemo(() => {
+    return disabilityBeneficiaries.filter(
+      (b) => b.dsDivisionId === 'DISTRICT_HQ' || b.dsDivisionId === 'DISTRICT'
+    );
+  }, [disabilityBeneficiaries]);
+
+  // 14 DS Disability Summary Breakdown
+  const dsDisabilitySummaryList = useMemo(() => {
+    return dsDivisionsList.map((ds) => {
+      const dsList = beneficiaries.filter(
+        (b) =>
+          (b.dsDivisionId || 'DS_VAHARAI') === ds.id &&
+          (b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature)
+      );
+      const total = dsList.length;
+      const physical = dsList.filter((b) => (b.disabilityNature || b.disabilityType || '').includes('உடல்') || (b.disabilityNature || '').toLowerCase().includes('physical')).length;
+      const visual = dsList.filter((b) => (b.disabilityNature || b.disabilityType || '').includes('பார்வை') || (b.disabilityNature || '').toLowerCase().includes('visual')).length;
+      const hearing = dsList.filter((b) => (b.disabilityNature || b.disabilityType || '').includes('செவி') || (b.disabilityNature || '').toLowerCase().includes('hearing')).length;
+      const intellectual = dsList.filter((b) => (b.disabilityNature || b.disabilityType || '').includes('உள') || (b.disabilityNature || '').toLowerCase().includes('intellectual')).length;
+      const multiple = dsList.filter((b) => (b.disabilityNature || b.disabilityType || '').includes('பலதரப்பட்ட') || (b.disabilityNature || '').toLowerCase().includes('multiple')).length;
+      const receiving = dsList.filter((b) => b.welfareStatus === 'ACTIVE' || b.welfareScheme === 'DISABILITY').length;
+      return {
+        ds,
+        total,
+        physical,
+        visual,
+        hearing,
+        intellectual,
+        multiple,
+        receiving,
+      };
+    });
+  }, [dsDivisionsList, beneficiaries]);
 
   // Super Admin: Wipe all disability records permanently
   const handleClearAllDisability = () => {
@@ -211,6 +254,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       phone: formPhone.trim(),
       address: formAddress.trim(),
       divisionCode: formDivision,
+      dsDivisionId: isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI'),
       familyHead: formFamilyRelationship === 'HEAD',
       householdNo: `HH-${formDivision}-${Math.floor(Math.random() * 900 + 100)}`,
       familyCode: effectiveFamCode,
@@ -359,7 +403,14 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   // Filtered dataset
   const filteredList = useMemo(() => {
     return disabilityBeneficiaries.filter((b) => {
-      if (selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) return false;
+      if (isDistrictAdmin) {
+        if (districtSubView === 'district_hq') {
+          if (b.dsDivisionId !== 'DISTRICT_HQ' && b.dsDivisionId !== 'DISTRICT') return false;
+        } else if (selectedDsFilter !== 'ALL') {
+          if ((b.dsDivisionId || 'DS_VAHARAI') !== selectedDsFilter) return false;
+        }
+      }
+      if (!isDistrictAdmin && selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) return false;
       if (selectedNature !== 'ALL' && b.disabilityNature !== selectedNature && b.disabilityType !== selectedNature) return false;
       if (selectedCause !== 'ALL' && b.disabilityCause !== selectedCause) return false;
       if (searchQuery.trim()) {
@@ -371,7 +422,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       }
       return true;
     });
-  }, [disabilityBeneficiaries, selectedDivision, selectedNature, selectedCause, searchQuery]);
+  }, [disabilityBeneficiaries, isDistrictAdmin, districtSubView, selectedDsFilter, selectedDivision, selectedNature, selectedCause, searchQuery]);
 
   // Cause counts
   const birthCount = disabilityBeneficiaries.filter((b) => b.disabilityCause === 'BIRTH').length;
@@ -409,16 +460,18 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
               className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              <span>{lang === 'ta' ? '+ புதிய மாற்றுத்திறனாளி பதிவு' : '+ Register Disabled Person'}</span>
+              <span>{isDistrictAdmin ? (lang === 'ta' ? '+ புதிய மாவட்ட மாற்றுத்திறனாளி பதிவு' : '+ Register District Disabled Person') : (lang === 'ta' ? '+ புதிய மாற்றுத்திறனாளி பதிவு' : '+ Register Disabled Person')}</span>
             </button>
-            <button
-              onClick={() => setShowCsvModal(true)}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 shadow-xs"
-            >
-              <Upload className="w-4 h-4 text-blue-400" />
-              <span>{lang === 'ta' ? 'தனியான CSV பதிவேற்றம்' : 'Disability CSV Upload'}</span>
-            </button>
-            {isSuperAdmin && disabilityBeneficiaries.length > 0 && (
+            {!isDistrictAdmin && (
+              <button
+                onClick={() => setShowCsvModal(true)}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors border border-slate-700 shadow-xs"
+              >
+                <Upload className="w-4 h-4 text-blue-400" />
+                <span>{lang === 'ta' ? 'தனியான CSV பதிவேற்றம்' : 'Disability CSV Upload'}</span>
+              </button>
+            )}
+            {!isDistrictAdmin && isSuperAdmin && disabilityBeneficiaries.length > 0 && (
               <button
                 type="button"
                 onClick={handleClearAllDisability}
@@ -429,19 +482,232 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
                 <span>{lang === 'ta' ? 'அனைத்து மாற்றுத்திறனாளியையும் அழி' : 'Clear All Disability'}</span>
               </button>
             )}
-            <button
-              onClick={handleDownloadDisabilitySampleCsv}
-              className="px-3 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors border border-slate-700"
-              title="Download Disability CSV Template"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">மாதிரி CSV</span>
-            </button>
+            {!isDistrictAdmin && (
+              <button
+                onClick={handleDownloadDisabilitySampleCsv}
+                className="px-3 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-colors border border-slate-700"
+                title="Download Disability CSV Template"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">மாதிரி CSV</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Metrics Grid */}
+      {/* District Admin Mode Navigation & Sub-Tabs */}
+      {isDistrictAdmin && (
+        <div className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs space-y-2.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-blue-800" />
+              <span className="text-xs font-bold text-slate-800">
+                {lang === 'ta' ? 'மாவட்ட செயலகக் கட்டுப்பாட்டகம் · மாற்றுத்திறனாளிகள் நலன்புரி' : 'District HQ Control Center · Disability Welfare'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {lang === 'ta' ? 'மாவட்ட நேரடிப் பதிவுகள் & 14 பிரதேச செயலகங்கள் சமறி' : 'District HQ Records & 14 Secretariats Summary'}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-slate-100">
+            <button
+              onClick={() => {
+                setDistrictSubView('district_hq');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'district_hq'
+                  ? 'bg-blue-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாவட்ட செயலக நேரடிப் பதிவுகள்' : 'District HQ Direct Records'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'district_hq' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {districtHqDisability.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('summary');
+                setSelectedDsFilter('ALL');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'summary'
+                  ? 'bg-blue-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் சமறி' : '14 DS Summary Board'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setDistrictSubView('all');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                districtSubView === 'all'
+                  ? 'bg-blue-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'அனைத்து பதிவுகளும் மேற்பார்வை' : 'All Secretariats Oversight'}</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${districtSubView === 'all' ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                {disabilityBeneficiaries.length}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 14 DS Disability Summary Control Board */}
+      {isDistrictAdmin && districtSubView === 'summary' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+              <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'பிரதேச செயலகங்கள்' : 'DS Divisions'}</div>
+              <div className="text-xl font-black text-slate-900 mt-0.5">{dsDivisionsList.length}</div>
+              <div className="text-[10px] text-blue-600 font-semibold mt-0.5">{lang === 'ta' ? 'முழு மாவட்டம்' : 'District Total'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+              <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'உடல் ஊனம் மொத்தம்' : 'Physical Total'}</div>
+              <div className="text-xl font-black text-blue-950 mt-0.5">
+                {dsDisabilitySummaryList.reduce((acc, d) => acc + d.physical, 0)}
+              </div>
+              <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? 'இயக்க ஊனம்' : 'Physical'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-indigo-200 shadow-xs bg-indigo-50/30">
+              <div className="text-[11px] font-bold text-indigo-800">{lang === 'ta' ? 'பார்வை குறைபாடு' : 'Visual Impairment'}</div>
+              <div className="text-xl font-black text-indigo-900 mt-0.5">
+                {dsDisabilitySummaryList.reduce((acc, d) => acc + d.visual, 0)}
+              </div>
+              <div className="text-[10px] text-indigo-700 mt-0.5">{lang === 'ta' ? 'பார்வையற்றோர்' : 'Visual'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-xs bg-amber-50/30">
+              <div className="text-[11px] font-bold text-amber-800">{lang === 'ta' ? 'செவிப்புலன் / பேச்சு' : 'Hearing / Speech'}</div>
+              <div className="text-xl font-black text-amber-900 mt-0.5">
+                {dsDisabilitySummaryList.reduce((acc, d) => acc + d.hearing, 0)}
+              </div>
+              <div className="text-[10px] text-amber-700 mt-0.5">{lang === 'ta' ? 'கேள்விக்குறைபாடு' : 'Hearing'}</div>
+            </div>
+
+            <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+              <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? 'கொடுப்பனவு பெறுவோர்' : 'Allowance Recipients'}</div>
+              <div className="text-xl font-black text-emerald-900 mt-0.5">
+                {dsDisabilitySummaryList.reduce((acc, d) => acc + d.receiving, 0)}
+              </div>
+              <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'மாதாந்த உதவி' : 'Monthly Aid'}</div>
+            </div>
+          </div>
+
+          {/* 14 DS Breakdown Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-blue-800" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  {lang === 'ta' ? '14 பிரதேச செயலகங்கள் மாற்றுத்திறனாளிகள் நலன்புரி நிலைவர சுருக்கம்' : '14 DS Disability Welfare Summary'}
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-500 font-mono">
+                {dsDivisionsList.length} Secretariats
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="py-2.5 px-4"># குறியீடு</th>
+                    <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம் & தலைமையகம்' : 'DS Division & HQ'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்தம்' : 'Total'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'உடல் ஊனம்' : 'Physical'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'பார்வை' : 'Visual'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'செவி/பேச்சு' : 'Hearing'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'உள நலம்' : 'Intellectual'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'பலதரப்பட்ட' : 'Multiple'}</th>
+                    <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'கொடுப்பனவு' : 'Allowance'}</th>
+                    <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dsDisabilitySummaryList.map((item) => (
+                    <tr key={item.ds.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-500">{item.ds.code}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 text-sm">
+                          {lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {item.ds.headquartersTa || item.ds.headquartersEn || item.ds.nameEn}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="font-bold text-slate-900 text-sm">{item.total}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-900 border border-blue-200">
+                          {item.physical}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-900 border border-indigo-200">
+                          {item.visual}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                          {item.hearing}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-200">
+                          {item.intellectual}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-900 border border-slate-200">
+                          {item.multiple}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          {item.receiving}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setSelectedDsFilter(item.ds.id);
+                            setDistrictSubView('all');
+                          }}
+                          className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>{lang === 'ta' ? 'பார்' : 'View'}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Working View (shown when not in District Summary mode) */}
+      {(!isDistrictAdmin || districtSubView !== 'summary') && (
+        <>
+          {/* Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs">
           <span className="text-[11px] text-slate-500 font-medium block">மொத்த மாற்றுத்திறனாளிகள்</span>
@@ -684,6 +950,8 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* Modal: New Disability Citizen Registration */}
       {showAddModal && (

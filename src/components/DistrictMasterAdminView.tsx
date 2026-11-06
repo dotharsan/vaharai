@@ -8,6 +8,7 @@ import {
   QueueToken,
   HouseholdData,
   PublicPetition,
+  PregnantMotherRecord,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { VaharaiLogo } from './VaharaiLogo';
@@ -48,6 +49,10 @@ import {
   Shield,
   LayoutDashboard,
   UserCheck,
+  HeartHandshake,
+  Baby,
+  Accessibility,
+  ClipboardList,
 } from 'lucide-react';
 
 interface DistrictMasterAdminViewProps {
@@ -58,6 +63,7 @@ interface DistrictMasterAdminViewProps {
   tokens: QueueToken[];
   households: HouseholdData[];
   petitions?: PublicPetition[];
+  pregnantMothers?: PregnantMotherRecord[];
   lang: Language;
   onUpdateUsers: (users: User[]) => void;
   onAuditLog: (action: string, details: string) => void;
@@ -73,6 +79,7 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
   tokens,
   households,
   petitions = [],
+  pregnantMothers = [],
   lang,
   onUpdateUsers,
   onAuditLog,
@@ -83,6 +90,7 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
 
   // Sub-menu Tab State: 'dashboard' | 'superadmins' | 'oversight'
   const [activeSubTab, setActiveSubTab] = useState<'dashboard' | 'superadmins' | 'oversight'>('dashboard');
+  const [dashboardCategory, setDashboardCategory] = useState<'divisions' | 'petitions' | 'elderly' | 'maternity' | 'disability'>('divisions');
 
   // DS Divisions loaded from persistent storage
   const [dsList, setDsList] = useState<DSDivision[]>(() => loadDsDivisions());
@@ -143,6 +151,68 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
   const totalTokens = tokens.length;
   const totalHouseholds = households.length;
   const totalPetitions = petitions.length;
+
+  // Sectoral Summaries across the 14 Divisional Secretariats (Requirement for Control Center)
+  const dsPetitionsSummary = dsList.map((ds) => {
+    const dsPets = petitions.filter((p) => (p.dsDivisionId || 'DS_VAHARAI') === ds.id);
+    const total = dsPets.length;
+    const pending = dsPets.filter((p) => p.status === 'PENDING').length;
+    const inProgress = dsPets.filter((p) => p.status === 'INQUIRY' || p.status === 'FIELD_INSPECTION').length;
+    const resolved = dsPets.filter((p) => p.status === 'RESOLVED').length;
+    const rate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+    return { ds, total, pending, inProgress, resolved, rate };
+  });
+
+  const dsElderlySummary = dsList.map((ds) => {
+    const dsCitizens = beneficiaries.filter((b) => (b.dsDivisionId || 'DS_VAHARAI') === ds.id);
+    const seniors = dsCitizens.filter(
+      (b) => b.isElderly || calculateAge(b.dob, b.nic) >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus
+    );
+    const total = seniors.length;
+    const seniors70Plus = seniors.filter((b) => calculateAge(b.dob, b.nic) >= 70).length;
+    const receiving = seniors.filter((b) => b.elderlyAllowanceStatus === 'RECEIVING' || b.welfareScheme === 'ELDERLY').length;
+    const waitlist = seniors.filter((b) => b.elderlyAllowanceStatus === 'WAITLIST').length;
+    const livingAlone = seniors.filter((b) => b.elderlyLivingStatus === 'ALONE').length;
+    const mobilitySupport = seniors.filter((b) => b.elderlyMobilityStatus === 'WHEELCHAIR' || b.elderlyMobilityStatus === 'BEDRIDDEN').length;
+    return { ds, total, seniors70Plus, receiving, waitlist, livingAlone, mobilitySupport };
+  });
+
+  const dsPregnantSummary = dsList.map((ds) => {
+    const dsMothers = pregnantMothers.filter((m) => (m.dsDivisionId || 'DS_VAHARAI') === ds.id);
+    const total = dsMothers.length;
+    const activeCollecting = dsMothers.filter((m) => m.status === 'ACTIVE_COLLECTING').length;
+    const waiting = dsMothers.filter((m) => m.status === 'WAITING_STAMP').length;
+    const completed = dsMothers.filter((m) => m.status === 'COMPLETED').length;
+    const monthlyValueLkr = activeCollecting * 4500;
+    return { ds, total, activeCollecting, waiting, completed, monthlyValueLkr };
+  });
+
+  const dsDisabilitySummary = dsList.map((ds) => {
+    const dsCitizens = beneficiaries.filter((b) => (b.dsDivisionId || 'DS_VAHARAI') === ds.id);
+    const disList = dsCitizens.filter(
+      (b) => b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature
+    );
+    const total = disList.length;
+    const physical = disList.filter((b) => b.disabilityNature?.includes('Physical') || b.disabilityNature?.includes('உடல் ஊனம்') || b.chronicIllness === 'DISABILITY_PHYSICAL').length;
+    const visual = disList.filter((b) => b.disabilityNature?.includes('Visual') || b.disabilityNature?.includes('பார்வை')).length;
+    const hearing = disList.filter((b) => b.disabilityNature?.includes('Hearing') || b.disabilityNature?.includes('செவிப்புலன்')).length;
+    const intellectual = disList.filter((b) => b.disabilityNature?.includes('Intellectual') || b.disabilityNature?.includes('Mental') || b.disabilityNature?.includes('உள நலம்')).length;
+    const multiple = disList.filter((b) => b.disabilityNature?.includes('Multiple') || b.disabilityNature?.includes('பலதரப்பட்ட')).length;
+    const receiving = disList.filter((b) => b.welfareScheme === 'DISABILITY' || b.welfareSchemes?.includes('DISABILITY')).length;
+    return { ds, total, physical, visual, hearing, intellectual, multiple, receiving };
+  });
+
+  // District HQ Direct Registrations
+  const districtHqPetitions = petitions.filter((p) => p.dsDivisionId === 'DISTRICT_HQ' || p.dsDivisionId === 'DISTRICT');
+  const districtHqElderly = beneficiaries.filter(
+    (b) => (b.dsDivisionId === 'DISTRICT_HQ' || b.dsDivisionId === 'DISTRICT') &&
+      (b.isElderly || calculateAge(b.dob, b.nic) >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus)
+  );
+  const districtHqPregnant = pregnantMothers.filter((m) => m.dsDivisionId === 'DISTRICT_HQ' || m.dsDivisionId === 'DISTRICT');
+  const districtHqDisability = beneficiaries.filter(
+    (b) => (b.dsDivisionId === 'DISTRICT_HQ' || b.dsDivisionId === 'DISTRICT') &&
+      (b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature)
+  );
 
   // Find user for a given Super Admin ID
   const getSuperAdminUser = (superAdminId: string, dsId: string): User | undefined => {
@@ -560,128 +630,583 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
             </div>
           </div>
 
-          {/* 14 DS Division Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {dsList.map((ds) => {
-              const superUser = getSuperAdminUser(ds.superAdminId, ds.id);
-              const isActive = superUser?.status !== 'INACTIVE';
-              const dsGns = divisions.filter((d) => d.dsDivisionId === ds.id);
-              const dsCitizens = beneficiaries.filter((b) => b.dsDivisionId === ds.id || (!b.dsDivisionId && ds.id === 'DS_VAHARAI'));
-              const dsTokens = tokens.filter((t) => t.dsDivisionId === ds.id || (!t.dsDivisionId && ds.id === 'DS_VAHARAI'));
-              const dsStaffCount = users.filter((u) => u.dsDivisionId === ds.id && u.role !== 'SUPERADMIN').length;
-              const coveragePct = Math.min(100, Math.round((dsGns.length / (ds.allocatedGnCount || 1)) * 100));
+          {/* Sectoral Summary Category Selector */}
+          <div className="bg-slate-100 p-1.5 rounded-xl flex flex-wrap items-center gap-1.5 border border-slate-200">
+            <button
+              onClick={() => setDashboardCategory('divisions')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                dashboardCategory === 'divisions'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-white'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? '14 பிரதேச செயலகங்கள் நிலைவரம்' : '14 DS Secretariats Overview'}</span>
+            </button>
 
-              return (
-                <div
-                  key={ds.id}
-                  className={`bg-white rounded-xl border transition-all p-4.5 shadow-xs hover:shadow-md flex flex-col justify-between ${
-                    !isActive ? 'border-red-200 bg-red-50/20' : 'border-slate-200 hover:border-emerald-500'
-                  }`}
-                >
-                  <div>
-                    {/* Header: Code & Status */}
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                        {ds.code}
-                      </span>
-                      {isActive ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                          <span>Active</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200">
-                          <Lock className="w-2.5 h-2.5" />
-                          <span>Blocked</span>
-                        </span>
-                      )}
-                    </div>
+            <button
+              onClick={() => setDashboardCategory('petitions')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                dashboardCategory === 'petitions'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-white'
+              }`}
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'பொதுமக்கள் கோரிக்கை & முறைப்பாடு சமறி' : 'Grievances & Petitions Summary'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-amber-400 text-slate-950 font-bold">
+                {totalPetitions}
+              </span>
+            </button>
 
-                    {/* DS Name */}
-                    <h3 className="text-sm font-extrabold text-slate-900 leading-tight">
-                      {lang === 'ta' ? ds.nameTa : ds.nameEn}
-                    </h3>
-                    <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5">
-                      <MapPin className="w-3 h-3 text-slate-400" />
-                      <span>{ds.headquartersTa || ds.headquartersEn || ds.nameEn}</span>
-                      <span>·</span>
-                      <span className="text-slate-600 font-medium">{lang === 'ta' ? ds.nameEn : ds.nameTa}</span>
-                    </div>
+            <button
+              onClick={() => setDashboardCategory('elderly')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                dashboardCategory === 'elderly'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-white'
+              }`}
+            >
+              <HeartHandshake className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'முதியோர் நலன்புரி சமறி' : 'Elderly Welfare Summary'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-700 text-white font-bold">
+                {dsElderlySummary.reduce((acc, d) => acc + d.total, 0) + districtHqElderly.length}
+              </span>
+            </button>
 
-                    {/* Super Admin Info */}
-                    <div className="bg-slate-50 rounded-lg p-2.5 mt-3 border border-slate-100 text-xs">
-                      <div className="text-[10px] uppercase font-bold text-slate-400">
-                        {lang === 'ta' ? 'சுப்பர் அட்மின்' : 'Super Admin'}
-                      </div>
-                      <div className="font-semibold text-slate-800 truncate mt-0.5">
-                        {superUser?.name || ds.superAdminNameTa}
-                      </div>
-                      <div className="text-[10px] font-mono text-emerald-700 mt-0.5">
-                        ID: {ds.superAdminId}
-                      </div>
-                    </div>
+            <button
+              onClick={() => setDashboardCategory('maternity')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                dashboardCategory === 'maternity'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-white'
+              }`}
+            >
+              <Baby className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'கர்ப்பிணித் தாய்மார் போசணை சமறி' : 'Pregnant Mothers Nutrition Summary'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-pink-700 text-white font-bold">
+                {pregnantMothers.length}
+              </span>
+            </button>
 
-                    {/* Progress & Metrics */}
-                    <div className="mt-3 space-y-2">
-                      <div>
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-500">{lang === 'ta' ? 'GN பிரிவுகள் பதிவு' : 'GN Units'}</span>
-                          <span className="font-bold text-slate-800">
-                            {dsGns.length} / {ds.allocatedGnCount} ({coveragePct}%)
-                          </span>
-                        </div>
-                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-1">
-                          <div
-                            className="bg-emerald-600 h-full rounded-full transition-all"
-                            style={{ width: `${coveragePct}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center">
-                        <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
-                          <div className="text-xs font-black text-slate-900">{dsCitizens.length}</div>
-                          <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'பிரஜைகள்' : 'Citizens'}</div>
-                        </div>
-                        <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
-                          <div className="text-xs font-black text-slate-900">{dsTokens.length}</div>
-                          <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'டோக்கன்' : 'Tokens'}</div>
-                        </div>
-                        <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
-                          <div className="text-xs font-black text-slate-900">{dsStaffCount}</div>
-                          <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'அலுவலர்' : 'Staff'}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Footer Action */}
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => toggleSuperAdminStatus(ds)}
-                      className={`text-[11px] font-bold px-2 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer ${
-                        isActive
-                          ? 'text-amber-800 hover:bg-amber-100 bg-amber-50 border border-amber-200'
-                          : 'text-emerald-800 hover:bg-emerald-100 bg-emerald-50 border border-emerald-200'
-                      }`}
-                      title={isActive ? 'Block Super Admin' : 'Activate Super Admin'}
-                    >
-                      {isActive ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                      <span>{isActive ? (lang === 'ta' ? 'முடக்கு' : 'Block') : (lang === 'ta' ? 'செயற்படுத்து' : 'Activate')}</span>
-                    </button>
-
-                    <button
-                      onClick={() => handleSelectDivision(ds.id)}
-                      className="px-3 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
-                    >
-                      <span>{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            <button
+              onClick={() => setDashboardCategory('disability')}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                dashboardCategory === 'disability'
+                  ? 'bg-emerald-800 text-white shadow-xs'
+                  : 'text-slate-700 hover:bg-white'
+              }`}
+            >
+              <Accessibility className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாற்றுத்திறனாளிகள் / அங்கவீனர் சமறி' : 'Disability Welfare Summary'}</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-indigo-700 text-white font-bold">
+                {dsDisabilitySummary.reduce((acc, d) => acc + d.total, 0) + districtHqDisability.length}
+              </span>
+            </button>
           </div>
+
+          {/* CATEGORY 1: 14 DS Division Cards Grid */}
+          {dashboardCategory === 'divisions' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {dsList.map((ds) => {
+                const superUser = getSuperAdminUser(ds.superAdminId, ds.id);
+                const isActive = superUser?.status !== 'INACTIVE';
+                const dsGns = divisions.filter((d) => d.dsDivisionId === ds.id);
+                const dsCitizens = beneficiaries.filter((b) => b.dsDivisionId === ds.id || (!b.dsDivisionId && ds.id === 'DS_VAHARAI'));
+                const dsTokens = tokens.filter((t) => t.dsDivisionId === ds.id || (!t.dsDivisionId && ds.id === 'DS_VAHARAI'));
+                const dsStaffCount = users.filter((u) => u.dsDivisionId === ds.id && u.role !== 'SUPERADMIN').length;
+                const coveragePct = Math.min(100, Math.round((dsGns.length / (ds.allocatedGnCount || 1)) * 100));
+
+                return (
+                  <div
+                    key={ds.id}
+                    className={`bg-white rounded-xl border transition-all p-4.5 shadow-xs hover:shadow-md flex flex-col justify-between ${
+                      !isActive ? 'border-red-200 bg-red-50/20' : 'border-slate-200 hover:border-emerald-500'
+                    }`}
+                  >
+                    <div>
+                      {/* Header: Code & Status */}
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                          {ds.code}
+                        </span>
+                        {isActive ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            <span>Active</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-200">
+                            <Lock className="w-2.5 h-2.5" />
+                            <span>Blocked</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* DS Name */}
+                      <h3 className="text-sm font-extrabold text-slate-900 leading-tight">
+                        {lang === 'ta' ? ds.nameTa : ds.nameEn}
+                      </h3>
+                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <span>{ds.headquartersTa || ds.headquartersEn || ds.nameEn}</span>
+                        <span>·</span>
+                        <span className="text-slate-600 font-medium">{lang === 'ta' ? ds.nameEn : ds.nameTa}</span>
+                      </div>
+
+                      {/* Super Admin Info */}
+                      <div className="bg-slate-50 rounded-lg p-2.5 mt-3 border border-slate-100 text-xs">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">
+                          {lang === 'ta' ? 'சுப்பர் அட்மின்' : 'Super Admin'}
+                        </div>
+                        <div className="font-semibold text-slate-800 truncate mt-0.5">
+                          {superUser?.name || ds.superAdminNameTa}
+                        </div>
+                        <div className="text-[10px] font-mono text-emerald-700 mt-0.5">
+                          ID: {ds.superAdminId}
+                        </div>
+                      </div>
+
+                      {/* Progress & Metrics */}
+                      <div className="mt-3 space-y-2">
+                        <div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-500">{lang === 'ta' ? 'GN பிரிவுகள் பதிவு' : 'GN Units'}</span>
+                            <span className="font-bold text-slate-800">
+                              {dsGns.length} / {ds.allocatedGnCount} ({coveragePct}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-1">
+                            <div
+                              className="bg-emerald-600 h-full rounded-full transition-all"
+                              style={{ width: `${coveragePct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center">
+                          <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
+                            <div className="text-xs font-black text-slate-900">{dsCitizens.length}</div>
+                            <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'பிரஜைகள்' : 'Citizens'}</div>
+                          </div>
+                          <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
+                            <div className="text-xs font-black text-slate-900">{dsTokens.length}</div>
+                            <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'டோக்கன்' : 'Tokens'}</div>
+                          </div>
+                          <div className="bg-slate-50/70 rounded-lg py-1 px-1.5">
+                            <div className="text-xs font-black text-slate-900">{dsStaffCount}</div>
+                            <div className="text-[9px] text-slate-500 uppercase">{lang === 'ta' ? 'அலுவலர்' : 'Staff'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Action */}
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => toggleSuperAdminStatus(ds)}
+                        className={`text-[11px] font-bold px-2 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer ${
+                          isActive
+                            ? 'text-amber-800 hover:bg-amber-100 bg-amber-50 border border-amber-200'
+                            : 'text-emerald-800 hover:bg-emerald-100 bg-emerald-50 border border-emerald-200'
+                        }`}
+                        title={isActive ? 'Block Super Admin' : 'Activate Super Admin'}
+                      >
+                        {isActive ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                        <span>{isActive ? (lang === 'ta' ? 'முடக்கு' : 'Block') : (lang === 'ta' ? 'செயற்படுத்து' : 'Activate')}</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleSelectDivision(ds.id)}
+                        className="px-3 py-1 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1 shadow-xs cursor-pointer"
+                      >
+                        <span>{lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* CATEGORY 2: PUBLIC PETITIONS & GRIEVANCES SUMMARY BOARD */}
+          {dashboardCategory === 'petitions' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'மாவட்ட நேரடி மனுக்கள்' : 'District HQ Direct'}</div>
+                  <div className="text-xl font-black text-slate-900 mt-0.5">{districtHqPetitions.length}</div>
+                  <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">{lang === 'ta' ? 'மாவட்ட செயலகத்தில் பதிவு' : 'Registered at HQ'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-xs bg-amber-50/30">
+                  <div className="text-[11px] font-bold text-amber-800">{lang === 'ta' ? 'நிலுவையில் (Pending)' : 'Total Pending'}</div>
+                  <div className="text-xl font-black text-amber-900 mt-0.5">
+                    {dsPetitionsSummary.reduce((acc, d) => acc + d.pending, 0)}
+                  </div>
+                  <div className="text-[10px] text-amber-700 mt-0.5">{lang === 'ta' ? '14 பிரதேச செயலகங்கள்' : 'Across 14 DS'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+                  <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'விசாரணையில் / கள ஆய்வு' : 'In Progress'}</div>
+                  <div className="text-xl font-black text-blue-900 mt-0.5">
+                    {dsPetitionsSummary.reduce((acc, d) => acc + d.inProgress, 0)}
+                  </div>
+                  <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? 'நடவடிக்கை எடுக்கப்படுகிறது' : 'Inquiries & Field'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+                  <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? 'தீர்க்கப்பட்டது (Resolved)' : 'Resolved'}</div>
+                  <div className="text-xl font-black text-emerald-900 mt-0.5">
+                    {dsPetitionsSummary.reduce((acc, d) => acc + d.resolved, 0)}
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'உத்தியோகபூர்வ தீர்வு' : 'Official Closure'}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4 text-emerald-800" />
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      {lang === 'ta' ? '14 பிரதேச செயலகங்களின் கோரிக்கை & முறைப்பாடு சமறி அட்டவணை' : '14 DS Secretariats Petitions Summary Table'}
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    {dsList.length} Secretariats
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4"># குறியீடு</th>
+                        <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த மனுக்கள்' : 'Total'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'நிலுவையில்' : 'Pending'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'விசாரணையில்' : 'Inquiry'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தீர்வு காணப்பட்டது' : 'Resolved'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தீர்வு விகிதம் (%)' : 'Rate'}</th>
+                        <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'நடவடிக்கை' : 'Action'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {dsPetitionsSummary.map((item) => (
+                        <tr key={item.ds.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-500">{item.ds.code}</td>
+                          <td className="py-3 px-4 font-sans">
+                            <div className="font-bold text-slate-900">{lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}</div>
+                            <div className="text-[10px] text-slate-500">{item.ds.headquartersTa}</div>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-900">{item.total}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                              {item.pending}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800">
+                              {item.inProgress}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              {item.resolved}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-800">
+                            {item.rate}%
+                          </td>
+                          <td className="py-3 px-4 text-right font-sans">
+                            <button
+                              onClick={() => handleSelectDivision(item.ds.id)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-800 hover:text-white rounded-md text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* CATEGORY 3: ELDERLY WELFARE SUMMARY BOARD */}
+          {dashboardCategory === 'elderly' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'மாவட்ட நேரடி முதியோர்' : 'District HQ Direct'}</div>
+                  <div className="text-xl font-black text-slate-900 mt-0.5">{districtHqElderly.length}</div>
+                  <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">{lang === 'ta' ? 'மாவட்ட செயலகத்தில் பதிவு' : 'Registered at HQ'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+                  <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? '70+ முதியோர் மொத்தம்' : '70+ Priority Seniors'}</div>
+                  <div className="text-xl font-black text-emerald-950 mt-0.5">
+                    {dsElderlySummary.reduce((acc, d) => acc + d.seniors70Plus, 0)}
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? '14 பிரதேச செயலகங்கள்' : 'Across 14 DS'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+                  <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'கொடுப்பனவு பெறுவோர்' : 'Receiving Allowance'}</div>
+                  <div className="text-xl font-black text-blue-900 mt-0.5">
+                    {dsElderlySummary.reduce((acc, d) => acc + d.receiving, 0)}
+                  </div>
+                  <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? 'மாதாந்த கொடுப்பனவு' : 'Active Recipients'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-purple-200 shadow-xs bg-purple-50/30">
+                  <div className="text-[11px] font-bold text-purple-800">{lang === 'ta' ? 'சக்கர நாற்காலி / படுக்கை' : 'Mobility Support'}</div>
+                  <div className="text-xl font-black text-purple-900 mt-0.5">
+                    {dsElderlySummary.reduce((acc, d) => acc + d.mobilitySupport, 0)}
+                  </div>
+                  <div className="text-[10px] text-purple-700 mt-0.5">{lang === 'ta' ? 'விசேட கவனிப்பு தேவை' : 'Wheelchair / Bedridden'}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <HeartHandshake className="w-4 h-4 text-emerald-800" />
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      {lang === 'ta' ? '14 பிரதேச செயலகங்கள் முதியோர் நலன்புரி சமறி அட்டவணை' : '14 DS Secretariats Senior Citizens Welfare Summary'}
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    {dsList.length} Secretariats
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4"># குறியீடு</th>
+                        <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? '60+ முதியோர்' : 'Total 60+'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? '70+ முன்னுரிமை' : '70+ Priority'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'கொடுப்பனவு பெறுவோர்' : 'Receiving'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'காத்திருப்பு' : 'Waitlist'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'தனிமை வாழ்வோர்' : 'Alone'}</th>
+                        <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'நடவடிக்கை' : 'Action'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {dsElderlySummary.map((item) => (
+                        <tr key={item.ds.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-500">{item.ds.code}</td>
+                          <td className="py-3 px-4 font-sans">
+                            <div className="font-bold text-slate-900">{lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}</div>
+                            <div className="text-[10px] text-slate-500">{item.ds.headquartersTa}</div>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-900">{item.total}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              {item.seniors70Plus}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-emerald-700">{item.receiving}</td>
+                          <td className="py-3 px-4 text-center text-amber-700 font-bold">{item.waitlist}</td>
+                          <td className="py-3 px-4 text-center text-purple-700 font-bold">{item.livingAlone}</td>
+                          <td className="py-3 px-4 text-right font-sans">
+                            <button
+                              onClick={() => handleSelectDivision(item.ds.id)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-800 hover:text-white rounded-md text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* CATEGORY 4: PREGNANT MOTHERS SUMMARY BOARD */}
+          {dashboardCategory === 'maternity' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'மாவட்ட நேரடித் தாய்மார்' : 'District HQ Direct'}</div>
+                  <div className="text-xl font-black text-slate-900 mt-0.5">{districtHqPregnant.length}</div>
+                  <div className="text-[10px] text-pink-700 font-semibold mt-0.5">{lang === 'ta' ? 'மாவட்ட செயலகத்தில் பதிவு' : 'Registered at HQ'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-pink-200 shadow-xs bg-pink-50/30">
+                  <div className="text-[11px] font-bold text-pink-800">{lang === 'ta' ? 'முத்திரை பெறுவோர் (Active)' : '10-Mo Active Collecting'}</div>
+                  <div className="text-xl font-black text-pink-950 mt-0.5">
+                    {dsPregnantSummary.reduce((acc, d) => acc + d.activeCollecting, 0)}
+                  </div>
+                  <div className="text-[10px] text-pink-700 mt-0.5">{lang === 'ta' ? '10 மாத போசணை முத்திரை' : 'Nutrition Vouchers'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-xs bg-amber-50/30">
+                  <div className="text-[11px] font-bold text-amber-800">{lang === 'ta' ? 'காத்திருப்பு வரிசை' : 'Waiting Queue'}</div>
+                  <div className="text-xl font-black text-amber-900 mt-0.5">
+                    {dsPregnantSummary.reduce((acc, d) => acc + d.waiting, 0)}
+                  </div>
+                  <div className="text-[10px] text-amber-700 mt-0.5">{lang === 'ta' ? 'முத்திரை ஒதுக்கப்படவுள்ளது' : 'Awaiting Stamp'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+                  <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? 'நிறைவுற்ற தாய்மார் (10 Mo)' : 'Completed Archive'}</div>
+                  <div className="text-xl font-black text-emerald-900 mt-0.5">
+                    {dsPregnantSummary.reduce((acc, d) => acc + d.completed, 0)}
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'முழுமையாக பெற்றவர்கள்' : '10-Month Completed'}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <Baby className="w-4 h-4 text-pink-700" />
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      {lang === 'ta' ? '14 பிரதேச செயலகங்கள் கர்ப்பிணித் தாய்மார் போசணை முத்திரை சமறி' : '14 DS Secretariats Pregnant Mothers Nutrition Summary'}
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    {dsList.length} Secretariats
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4"># குறியீடு</th>
+                        <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த தாய்மார்' : 'Total'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'பொருட்கள் பெறுவோர்' : 'Active 10-Mo'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'காத்திருப்பு' : 'Waiting'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'நிறைவுற்றவை' : 'Completed'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மாதாந்த பெறுமதி' : 'Monthly Value'}</th>
+                        <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'நடவடிக்கை' : 'Action'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {dsPregnantSummary.map((item) => (
+                        <tr key={item.ds.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-500">{item.ds.code}</td>
+                          <td className="py-3 px-4 font-sans">
+                            <div className="font-bold text-slate-900">{lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}</div>
+                            <div className="text-[10px] text-slate-500">{item.ds.headquartersTa}</div>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-900">{item.total}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-pink-100 text-pink-800">
+                              {item.activeCollecting}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-amber-700">{item.waiting}</td>
+                          <td className="py-3 px-4 text-center font-bold text-emerald-700">{item.completed}</td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-800">
+                            ரூ. {item.monthlyValueLkr.toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4 text-right font-sans">
+                            <button
+                              onClick={() => handleSelectDivision(item.ds.id)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-800 hover:text-white rounded-md text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* CATEGORY 5: DISABILITY WELFARE SUMMARY BOARD */}
+          {dashboardCategory === 'disability' && (
+            <div className="space-y-4 animate-in fade-in duration-150">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                  <div className="text-[11px] font-bold text-slate-500">{lang === 'ta' ? 'மாவட்ட நேரடி மாற்றுத்திறனாளி' : 'District HQ Direct'}</div>
+                  <div className="text-xl font-black text-slate-900 mt-0.5">{districtHqDisability.length}</div>
+                  <div className="text-[10px] text-indigo-700 font-semibold mt-0.5">{lang === 'ta' ? 'மாவட்ட செயலகத்தில் பதிவு' : 'Registered at HQ'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-xs bg-blue-50/30">
+                  <div className="text-[11px] font-bold text-blue-800">{lang === 'ta' ? 'உடல் ஊனம் (Physical)' : 'Physical Disability'}</div>
+                  <div className="text-xl font-black text-blue-950 mt-0.5">
+                    {dsDisabilitySummary.reduce((acc, d) => acc + d.physical, 0)}
+                  </div>
+                  <div className="text-[10px] text-blue-700 mt-0.5">{lang === 'ta' ? '14 பிரதேச செயலகங்கள்' : 'Across 14 DS'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-purple-200 shadow-xs bg-purple-50/30">
+                  <div className="text-[11px] font-bold text-purple-800">{lang === 'ta' ? 'பார்வை / செவிப்புலன்' : 'Visual & Hearing'}</div>
+                  <div className="text-xl font-black text-purple-900 mt-0.5">
+                    {dsDisabilitySummary.reduce((acc, d) => acc + d.visual + d.hearing, 0)}
+                  </div>
+                  <div className="text-[10px] text-purple-700 mt-0.5">{lang === 'ta' ? 'புலன் குறைபாடுகள்' : 'Sensory Impairments'}</div>
+                </div>
+                <div className="bg-white p-3.5 rounded-xl border border-emerald-200 shadow-xs bg-emerald-50/30">
+                  <div className="text-[11px] font-bold text-emerald-800">{lang === 'ta' ? 'அரசு உதவி பெறுவோர்' : 'Allowance Recipients'}</div>
+                  <div className="text-xl font-black text-emerald-900 mt-0.5">
+                    {dsDisabilitySummary.reduce((acc, d) => acc + d.receiving, 0)}
+                  </div>
+                  <div className="text-[10px] text-emerald-700 mt-0.5">{lang === 'ta' ? 'நலன்புரி கொடுப்பனவு' : 'Welfare Grant'}</div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <Accessibility className="w-4 h-4 text-indigo-700" />
+                    <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      {lang === 'ta' ? '14 பிரதேச செயலகங்கள் மாற்றுத்திறனாளிகள் / அங்கவீனர் நலன்புரி சமறி' : '14 DS Secretariats Disability Welfare Summary Table'}
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-mono">
+                    {dsList.length} Secretariats
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4"># குறியீடு</th>
+                        <th className="py-2.5 px-4">{lang === 'ta' ? 'பிரதேச செயலகம்' : 'Divisional Secretariat'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'மொத்த அங்கவீனர்' : 'Total'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'உடல் ஊனம்' : 'Physical'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'பார்வை' : 'Visual'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'செவி / பேச்சு' : 'Hearing'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'உள நலம்' : 'Mental'}</th>
+                        <th className="py-2.5 px-4 text-center">{lang === 'ta' ? 'கொடுப்பனவு' : 'Grant'}</th>
+                        <th className="py-2.5 px-4 text-right">{lang === 'ta' ? 'நடவடிக்கை' : 'Action'}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {dsDisabilitySummary.map((item) => (
+                        <tr key={item.ds.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-500">{item.ds.code}</td>
+                          <td className="py-3 px-4 font-sans">
+                            <div className="font-bold text-slate-900">{lang === 'ta' ? item.ds.nameTa : item.ds.nameEn}</div>
+                            <div className="text-[10px] text-slate-500">{item.ds.headquartersTa}</div>
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-slate-900">{item.total}</td>
+                          <td className="py-3 px-4 text-center font-bold text-blue-700">{item.physical}</td>
+                          <td className="py-3 px-4 text-center font-bold text-purple-700">{item.visual}</td>
+                          <td className="py-3 px-4 text-center font-bold text-amber-700">{item.hearing}</td>
+                          <td className="py-3 px-4 text-center font-bold text-indigo-700">{item.intellectual}</td>
+                          <td className="py-3 px-4 text-center font-bold text-emerald-700">{item.receiving}</td>
+                          <td className="py-3 px-4 text-right font-sans">
+                            <button
+                              onClick={() => handleSelectDivision(item.ds.id)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-800 hover:text-white rounded-md text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              {lang === 'ta' ? 'மேற்பார்வை' : 'Inspect'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

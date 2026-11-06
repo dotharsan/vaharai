@@ -85,8 +85,8 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
   const isMaternityOfficer = currentUser.role === 'MATERNITY_OFFICER' || currentUser.role === 'ECDO';
   const isDisabilityOfficer = currentUser.role === 'DISABILITY_OFFICER';
 
-  // District Admin sub-views: 'summary' (14 DS Summary Dashboard) | 'district_hq' (District HQ Direct Petitions) | 'all' (All Secretariats Oversight)
-  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'summary' : 'all');
+  // District Admin sub-views: 'district_hq' (District HQ Direct Petitions) | 'summary' (14 DS Summary Dashboard) | 'all' (All Secretariats Oversight)
+  const [districtSubView, setDistrictSubView] = useState<'summary' | 'district_hq' | 'all'>(isDistrictAdmin ? 'district_hq' : 'all');
   const [selectedDsFilter, setSelectedDsFilter] = useState<string>('ALL');
 
   const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
