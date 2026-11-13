@@ -6,6 +6,7 @@ import {
   AssistanceRecord,
   PregnantMotherRecord,
   LandRecord,
+  HouseholdData,
   ALL_WELFARE_SCHEMES_LIST,
   WelfareScheme,
   FamilyRelationship,
@@ -32,6 +33,8 @@ import {
   parseDisabilityFromCsv,
   parseAswesumaFromCsv,
   parseLandFromCsv,
+  parseDivisionsFromCsv,
+  buildHouseholdsFromBeneficiaries,
   exportBeneficiariesToCsv,
   exportUsersToCsv,
   exportDivisionsToCsv,
@@ -71,6 +74,7 @@ import {
   CheckSquare,
   Square,
   X,
+  Cloud,
 } from 'lucide-react';
 import { 
   createDatabaseSnapshot, 
@@ -84,7 +88,7 @@ import {
   clearAllPregnantMothersPermanently,
   clearAllLandRecordsPermanently,
 } from '../services/storage';
-import { saveToDesignatedDriveFile, isDriveAutoSyncEnabled } from '../services/googleDrive';
+import { saveToDesignatedDriveFile, isDriveAutoSyncEnabled, getDesignatedDriveFileName } from '../services/googleDrive';
 import { isGoogleDriveAuthenticated } from '../services/auth';
 import { FamilyGroupModal } from './FamilyGroupModal';
 
@@ -95,14 +99,18 @@ interface CsvManagementViewProps {
   assistanceRecords?: AssistanceRecord[];
   pregnantMothers?: PregnantMotherRecord[];
   landRecords?: LandRecord[];
+  households?: HouseholdData[];
   currentUser: User;
   lang: Language;
   onUpdateBeneficiaries: (items: Beneficiary[]) => void;
   onUpdateUsers: (items: User[]) => void;
+  onUpdateDivisions?: (items: GNDivision[]) => void;
   onUpdateAssistanceRecords?: (items: AssistanceRecord[]) => void;
   onUpdatePregnantMothers?: (items: PregnantMotherRecord[]) => void;
   onUpdateLandRecords?: (items: LandRecord[]) => void;
+  onUpdateHouseholds?: (items: HouseholdData[]) => void;
   onAuditLog: (action: string, details: string) => void;
+  onNavigateToDrive?: () => void;
 }
 
 export type ActiveCsvType =
@@ -124,16 +132,24 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
   assistanceRecords = [],
   pregnantMothers = [],
   landRecords = [],
+  households = [],
   currentUser,
   lang,
   onUpdateBeneficiaries,
   onUpdateUsers,
+  onUpdateDivisions,
   onUpdateAssistanceRecords,
   onUpdatePregnantMothers,
   onUpdateLandRecords,
+  onUpdateHouseholds,
   onAuditLog,
+  onNavigateToDrive,
 }) => {
   const t = translations[lang];
+  const defaultDivisionCode =
+    currentUser.role === 'GRAMANIILATHARI'
+      ? (currentUser.division || '211').trim().toUpperCase()
+      : undefined;
 
   // Primary View Mode: CSV Management vs Connected Family Visualizer
   const [viewMode, setViewMode] = useState<'csv_io' | 'family_visualizer'>('csv_io');
@@ -162,6 +178,7 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
   const [parsedDuplicates, setParsedDuplicates] = useState<AssistanceRecord[]>([]);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [successBanner, setSuccessBanner] = useState<string>('');
+  const [showDriveConnectCta, setShowDriveConnectCta] = useState<boolean>(false);
   const [showRegisteredRecords, setShowRegisteredRecords] = useState<boolean>(false);
 
   const handleCancelPreview = () => {
@@ -248,6 +265,8 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       list = landRecords || [];
     } else if (activeType === 'users') {
       list = users;
+    } else if (activeType === 'divisions') {
+      list = divisions || [];
     } else {
       list = beneficiaries;
     }
@@ -255,12 +274,12 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
     if (registeredSearchQuery.trim()) {
       const q = registeredSearchQuery.toLowerCase().trim();
       list = list.filter((item: any) => {
-        const text = `${item.id || ''} ${item.nic || ''} ${item.nameTa || ''} ${item.nameEn || ''} ${item.name || ''} ${item.ownerNic || ''} ${item.ownerNameTa || ''} ${item.permitNo || ''} ${item.familyCode || ''} ${item.phone || ''}`.toLowerCase();
+        const text = `${item.id || ''} ${item.code || ''} ${item.nic || ''} ${item.nameTa || ''} ${item.nameEn || ''} ${item.name || ''} ${item.gnOfficerName || ''} ${item.ownerNic || ''} ${item.ownerNameTa || ''} ${item.permitNo || ''} ${item.familyCode || ''} ${item.phone || ''}`.toLowerCase();
         return text.includes(q);
       });
     }
     return list;
-  }, [activeType, beneficiaries, pregnantMothers, assistanceRecords, landRecords, users, registeredSearchQuery]);
+  }, [activeType, beneficiaries, pregnantMothers, assistanceRecords, landRecords, users, divisions, registeredSearchQuery]);
 
   const handleClearAllActiveCategory = () => {
     if (!isSuperAdmin) {
@@ -276,6 +295,7 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       : activeType === 'assistance' ? (lang === 'ta' ? 'நிவாரண உதவி பதிவுகள்' : 'Relief Aid Records')
       : activeType === 'land' ? (lang === 'ta' ? 'காணிப் பதிவுகள்' : 'Land Records')
       : activeType === 'users' ? (lang === 'ta' ? 'உத்தியோகத்தர் பயனாளர்கள்' : 'Staff Users')
+      : activeType === 'divisions' ? (lang === 'ta' ? 'கிராம அலுவலர் பிரிவுகள்' : 'GN Divisions')
       : (lang === 'ta' ? 'பிரஜைகள் தரவுத்தளம்' : 'Citizens');
 
     const confirmMsg = lang === 'ta'
@@ -303,6 +323,9 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       const superAdminOnly = users.filter((u) => u.role === 'SUPERADMIN');
       onUpdateUsers(superAdminOnly);
       onAuditLog('CLEAR_ALL_CATEGORY', `Super Admin (${currentUser.name}) reset staff users`);
+    } else if (activeType === 'divisions') {
+      if (onUpdateDivisions) onUpdateDivisions([]);
+      onAuditLog('CLEAR_ALL_CATEGORY', `Super Admin (${currentUser.name}) cleared GN divisions`);
     } else {
       clearAllBeneficiariesPermanently();
       onUpdateBeneficiaries([]);
@@ -349,6 +372,10 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       const updated = users.filter((u) => u.id !== item.id);
       onUpdateUsers(updated);
       onAuditLog('DELETE_USER', `Deleted user ${item.name} (${item.id})`);
+    } else if (activeType === 'divisions' && onUpdateDivisions) {
+      const updated = divisions.filter((d) => d.code !== item.code);
+      onUpdateDivisions(updated);
+      onAuditLog('DELETE_DIVISION', `Deleted GN division ${item.nameTa || item.nameEn} (${item.code})`);
     } else {
       recordDeletedId(item.id, item.nic);
       const updated = beneficiaries.filter((b) => b.id !== item.id && (item.nic ? b.nic !== item.nic : true));
@@ -389,6 +416,9 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
     } else if (activeType === 'users') {
       const updated = users.filter((u) => !idSet.has(u.id) || u.role === 'SUPERADMIN');
       onUpdateUsers(updated);
+    } else if (activeType === 'divisions' && onUpdateDivisions) {
+      const updated = divisions.filter((d) => !idSet.has(d.code));
+      onUpdateDivisions(updated);
     } else {
       const toDel = beneficiaries.filter((b) => idSet.has(b.id) || (b.nic && idSet.has(b.nic)));
       recordDeletedIds(toDel.map((b) => b.id).concat(toDel.map((b) => b.nic).filter(Boolean)));
@@ -501,40 +531,48 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       const text = event.target?.result as string;
       setFileContent(text);
 
+      let parsedItems: any[] = [];
+      let errors: string[] = [];
+
       if (activeType === 'families') {
-        const { items, errors } = parseFamiliesFromCsv(text, beneficiaries);
-        setParsedPreview(items);
+        const res = parseFamiliesFromCsv(text, beneficiaries, defaultDivisionCode);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'elderly') {
-        const { items, errors } = parseElderlyFromCsv(text, beneficiaries);
-        setParsedPreview(items);
+        const res = parseElderlyFromCsv(text, beneficiaries, defaultDivisionCode);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'pregnant') {
-        const { beneficiaries: bItems, pregnantMothers: mItems, errors } = parsePregnantMothersFromCsv(text, beneficiaries);
-        setParsedPreview(bItems);
-        setParsedPregnantMothers(mItems);
+        const res = parsePregnantMothersFromCsv(text, beneficiaries, false, defaultDivisionCode);
+        parsedItems = res.beneficiaries;
+        errors = res.errors;
+        setParsedPreview(res.beneficiaries);
+        setParsedPregnantMothers(res.pregnantMothers);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'disability') {
-        const { items, errors } = parseDisabilityFromCsv(text, beneficiaries);
-        setParsedPreview(items);
+        const res = parseDisabilityFromCsv(text, beneficiaries, defaultDivisionCode);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'aswesuma') {
-        const { items, errors } = parseAswesumaFromCsv(text, beneficiaries);
-        setParsedPreview(items);
+        const res = parseAswesumaFromCsv(text, beneficiaries, defaultDivisionCode);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'beneficiaries') {
-        const { items, errors } = parseBeneficiariesFromCsv(text);
-        setParsedPreview(items);
+        const res = parseBeneficiariesFromCsv(text, defaultDivisionCode, beneficiaries);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'assistance') {
-        // Requirement 06: Apply Batch Metadata (Unique ID and Program Title)
-        const { validRecords, duplicateRecords, errors } = parseAssistanceFromCsv(
+        const res = parseAssistanceFromCsv(
           text,
           assistanceRecords,
           beneficiaries,
@@ -543,33 +581,71 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
             programTitle: assistanceProgramTitle,
             donor: assistanceDonor,
             date: assistanceDate,
+            defaultDivisionCode,
           }
         );
-        setParsedPreview(validRecords);
-        setParsedDuplicates(duplicateRecords);
-        setParseErrors(errors);
+        parsedItems = res.validRecords;
+        errors = res.errors;
+        setParsedPreview(res.validRecords);
+        setParsedDuplicates(res.duplicateRecords);
       } else if (activeType === 'land') {
-        // Requirement 05: Land CSV parsing
-        const { items, errors } = parseLandFromCsv(text, landRecords);
-        setParsedPreview(items);
+        const res = parseLandFromCsv(text, landRecords, defaultDivisionCode);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
       } else if (activeType === 'users') {
-        const { items, errors } = parseUsersFromCsv(text);
-        setParsedPreview(items);
+        const res = parseUsersFromCsv(text);
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
         setParsedDuplicates([]);
-        setParseErrors(errors);
+      } else if (activeType === 'divisions') {
+        const res = parseDivisionsFromCsv(text, currentUser.dsDivisionId || 'DS_VAHARAI');
+        parsedItems = res.items;
+        errors = res.errors;
+        setParsedPreview(res.items);
+        setParsedDuplicates([]);
       } else {
         setParsedPreview([]);
         setParsedDuplicates([]);
-        setParseErrors([]);
       }
+
+      if (defaultDivisionCode && activeType !== 'users' && activeType !== 'divisions' && parsedItems.length > 0) {
+        const mismatchedDivs = Array.from(
+          new Set(
+            parsedItems
+              .map((it: any) => (it.divisionCode || '').trim().toUpperCase())
+              .filter((code) => code && code !== defaultDivisionCode)
+          )
+        );
+        if (mismatchedDivs.length > 0) {
+          errors = [
+            ...errors,
+            lang === 'ta'
+              ? `குறிப்பு: நீங்கள் GN ${defaultDivisionCode} பிரிவில் உள்ளீர்கள்; ஆனால் CSV-இல் வேறு பிரிவுக் குறியீடுகள் (${mismatchedDivs.join(', ')}) உள்ளன.`
+              : `Notice: You are logged in under GN Division ${defaultDivisionCode}, while CSV rows use division(s): ${mismatchedDivs.join(', ')}.`,
+          ];
+        }
+      }
+
+      setParseErrors(errors);
     };
     reader.readAsText(file, 'UTF-8');
   };
 
-  const handleCommitImport = (includeDuplicates: boolean = false) => {
+  const getCitizenMergeKey = (b: Beneficiary): string => {
+    const cleanNic = (b.nic || '').trim().toUpperCase();
+    if (cleanNic && !cleanNic.startsWith('TNIC-') && !cleanNic.startsWith('TEMP-')) {
+      return `NIC:${cleanNic}`;
+    }
+    return `ID:${b.id}`;
+  };
+
+  const handleCommitImport = async (includeDuplicates: boolean = false) => {
     if (parsedPreview.length === 0 && (!includeDuplicates || parsedDuplicates.length === 0)) return;
+
+    let baseSuccessMsg = '';
 
     if (activeType === 'assistance') {
       const itemsToSave = includeDuplicates
@@ -583,36 +659,40 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
         'IMPORT_ASSISTANCE_CSV',
         `Imported ${itemsToSave.length} relief records (duplicates filtered: ${includeDuplicates ? 'No (Forced)' : 'Yes'})`
       );
-      setSuccessBanner(
+      baseSuccessMsg =
         lang === 'ta'
           ? `✅ ${itemsToSave.length} உதவிப் பதிவுகள் சேர்க்கப்பட்டன! (${parsedDuplicates.length} இரட்டை உதவிகள் ${includeDuplicates ? 'விதிவிலக்காக அனுமதிக்கப்பட்டன' : 'தடுக்கப்பட்டன'})`
-          : `✅ ${itemsToSave.length} assistance records saved! (${parsedDuplicates.length} duplicates ${includeDuplicates ? 'force imported' : 'prevented'}).`
-      );
+          : `✅ ${itemsToSave.length} assistance records saved! (${parsedDuplicates.length} duplicates ${includeDuplicates ? 'force imported' : 'prevented'}).`;
     } else if (activeType === 'pregnant') {
-      // Update both Beneficiaries and PregnantMothers in sync
       const newCitizens = parsedPreview as Beneficiary[];
       newCitizens.forEach((c) => removeDeletedId(c.id, c.nic));
-      const existingMap = new Map(beneficiaries.map((b) => [b.nic, b]));
+      const existingMap = new Map(beneficiaries.map((b) => [getCitizenMergeKey(b), b]));
       for (const item of newCitizens) {
-        existingMap.set(item.nic, item);
+        existingMap.set(getCitizenMergeKey(item), item);
       }
-      onUpdateBeneficiaries(Array.from(existingMap.values()));
+      const mergedCitizens = Array.from(existingMap.values());
+      onUpdateBeneficiaries(mergedCitizens);
 
       if (onUpdatePregnantMothers && parsedPregnantMothers.length > 0) {
         parsedPregnantMothers.forEach((m) => removeDeletedId(m.id, m.nic));
-        const motherMap = new Map(pregnantMothers.map((m) => [m.nic, m]));
+        const motherMap = new Map(
+          pregnantMothers.map((m) => [
+            (m.nic && !m.nic.startsWith('TNIC-') ? `NIC:${m.nic.toUpperCase()}` : `ID:${m.id}`),
+            m,
+          ])
+        );
         for (const item of parsedPregnantMothers) {
-          motherMap.set(item.nic, item);
+          const mKey = item.nic && !item.nic.startsWith('TNIC-') ? `NIC:${item.nic.toUpperCase()}` : `ID:${item.id}`;
+          motherMap.set(mKey, item);
         }
         onUpdatePregnantMothers(Array.from(motherMap.values()));
       }
 
       onAuditLog('IMPORT_CSV', `Imported ${newCitizens.length} pregnant mother records`);
-      setSuccessBanner(
+      baseSuccessMsg =
         lang === 'ta'
           ? `✅ ${newCitizens.length} கர்ப்பிணித் தாய்மார் விபரங்கள் குடும்பக் குறியீட்டுடன் சேர்க்கப்பட்டன!`
-          : `✅ ${newCitizens.length} pregnant mother records imported and linked to families!`
-      );
+          : `✅ ${newCitizens.length} pregnant mother records imported and linked to families!`;
     } else if (
       activeType === 'families' ||
       activeType === 'elderly' ||
@@ -621,14 +701,18 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       activeType === 'beneficiaries'
     ) {
       const newItems = parsedPreview as Beneficiary[];
-      // Issue 01 fix: Remove tombstone IDs so re-uploaded families after deletion are fully active
       newItems.forEach((item) => removeDeletedId(item.id, item.nic));
-      const existingMap = new Map(beneficiaries.map((b) => [b.nic, b]));
+      const existingMap = new Map(beneficiaries.map((b) => [getCitizenMergeKey(b), b]));
       for (const item of newItems) {
-        existingMap.set(item.nic, item);
+        existingMap.set(getCitizenMergeKey(item), item);
       }
       const merged = Array.from(existingMap.values());
       onUpdateBeneficiaries(merged);
+
+      if ((activeType === 'families' || activeType === 'aswesuma' || activeType === 'beneficiaries') && onUpdateHouseholds) {
+        const rebuiltHouseholds = buildHouseholdsFromBeneficiaries(merged, households);
+        onUpdateHouseholds(rebuiltHouseholds);
+      }
 
       const typeLabel =
         activeType === 'families'
@@ -642,11 +726,10 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
           : lang === 'ta' ? 'பிரஜைகள்' : 'citizens';
 
       onAuditLog('IMPORT_CSV', `Imported ${newItems.length} ${activeType} records via CSV`);
-      setSuccessBanner(
+      baseSuccessMsg =
         lang === 'ta'
           ? `✅ ${newItems.length} ${typeLabel} வெற்றிகரமாக குடும்ப அலகு மற்றும் நலன்புரி உதவிகளுடன் சேர்க்கப்பட்டனர்!`
-          : `✅ ${newItems.length} ${typeLabel} imported successfully with family linkages!`
-      );
+          : `✅ ${newItems.length} ${typeLabel} imported successfully with family linkages!`;
     } else if (activeType === 'users') {
       const newUsers = parsedPreview as User[];
       const existingMap = new Map(users.map((u) => [u.id, u]));
@@ -656,9 +739,20 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       const merged = Array.from(existingMap.values());
       onUpdateUsers(merged);
       onAuditLog('IMPORT_CSV', `Imported ${newUsers.length} staff users via CSV`);
-      setSuccessBanner(
-        `${newUsers.length} ${lang === 'ta' ? 'அலுவலர் கணக்குகள் சேர்க்கப்பட்டன!' : 'users imported successfully!'}`
-      );
+      baseSuccessMsg = `✅ ${newUsers.length} ${lang === 'ta' ? 'அலுவலர் கணக்குகள் சேர்க்கப்பட்டன!' : 'users imported successfully!'}`;
+    } else if (activeType === 'divisions') {
+      const newDivisions = parsedPreview as GNDivision[];
+      const existingMap = new Map(divisions.map((d) => [d.code.trim().toUpperCase(), d]));
+      for (const item of newDivisions) {
+        existingMap.set(item.code.trim().toUpperCase(), item);
+      }
+      const merged = Array.from(existingMap.values());
+      if (onUpdateDivisions) onUpdateDivisions(merged);
+      onAuditLog('IMPORT_CSV', `Imported ${newDivisions.length} GN divisions via CSV`);
+      baseSuccessMsg =
+        lang === 'ta'
+          ? `✅ ${newDivisions.length} கிராம அலுவலர் பிரிவுகள் வெற்றிகரமாக சேர்க்கப்பட்டன!`
+          : `✅ ${newDivisions.length} GN divisions imported successfully!`;
     } else if (activeType === 'land') {
       const newLand = parsedPreview as LandRecord[];
       const existingMap = new Map(landRecords.map((l) => [l.id, l]));
@@ -668,14 +762,13 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       const merged = Array.from(existingMap.values());
       if (onUpdateLandRecords) onUpdateLandRecords(merged);
       onAuditLog('IMPORT_CSV', `Imported ${newLand.length} land records via CSV`);
-      setSuccessBanner(
+      baseSuccessMsg =
         lang === 'ta'
           ? `✅ ${newLand.length} காணிப் பதிவுகள் (அனுமதிப்பத்திரம் / LDO) வெற்றிகரமாக சேர்க்கப்பட்டன!`
-          : `✅ ${newLand.length} land records (Permits / LDO) imported successfully!`
-      );
+          : `✅ ${newLand.length} land records (Permits / LDO) imported successfully!`;
     }
 
-    // Clear uploaded CSV completely from page after saving (Requirement 02)
+    // Clear uploaded CSV preview and keep Registered Records visible
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -685,21 +778,36 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
     setFileContent('');
     setFileName('');
     setParseErrors([]);
-    setShowRegisteredRecords(false);
-    setTimeout(() => setSuccessBanner(''), 6000);
+    setShowRegisteredRecords(true);
 
-    // Instant cloud synchronization push
-    setTimeout(async () => {
-      try {
-        const snapshot = createDatabaseSnapshot();
-        await pushToCentralDatabase(snapshot);
-        if (isGoogleDriveAuthenticated() && isDriveAutoSyncEnabled()) {
-          await saveToDesignatedDriveFile(snapshot);
-        }
-      } catch (err) {
-        console.warn('[CSV Import] Instant cloud sync notification:', err);
+    let driveNote = '';
+    let needsDriveConnect = false;
+    try {
+      const snapshot = createDatabaseSnapshot();
+      const serverOk = await pushToCentralDatabase(snapshot);
+      if (isGoogleDriveAuthenticated() && isDriveAutoSyncEnabled()) {
+        const res = await saveToDesignatedDriveFile(snapshot);
+        driveNote =
+          lang === 'ta'
+            ? ` · ☁️ Google Drive ("${res.fileName}") கோப்பிலும் சேமிக்கப்பட்டது!`
+            : ` · ☁️ Saved to Google Drive ("${res.fileName}")!`;
+      } else if (!isGoogleDriveAuthenticated()) {
+        needsDriveConnect = true;
+        driveNote =
+          lang === 'ta'
+            ? ` · ${serverOk ? 'மத்திய சர்வரில் சேமிக்கப்பட்டது; ' : ''}குறிப்பு: உங்கள் Google Drive கணக்கு இன்னும் இணைக்கப்படவில்லை (டிரைவ் JSON கோப்பு தானாகப் புதுப்பிக்கப்படாது).`
+            : ` · ${serverOk ? 'Saved to central server; ' : ''}Note: Google Drive is not connected yet, so your Drive JSON file was not updated.`;
       }
-    }, 50);
+    } catch (err: any) {
+      needsDriveConnect = !isGoogleDriveAuthenticated();
+      driveNote =
+        lang === 'ta'
+          ? ` · ⚠️ கிளவுட் ஒத்திசைவு எச்சரிக்கை: ${err?.message || 'தொடர்பு பிழை'}`
+          : ` · ⚠️ Cloud sync notice: ${err?.message || 'sync skipped'}`;
+    }
+
+    setShowDriveConnectCta(needsDriveConnect);
+    setSuccessBanner(`${baseSuccessMsg}${driveNote}`);
   };
 
   const getWelfareBadge = (code: WelfareScheme) => {
@@ -786,9 +894,38 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
       </div>
 
       {successBanner && (
-        <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-          <span>{successBanner}</span>
+        <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-in fade-in">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+            <span>{successBanner}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {showDriveConnectCta && onNavigateToDrive && (
+              <button
+                type="button"
+                onClick={onNavigateToDrive}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors"
+              >
+                <Cloud className="w-3.5 h-3.5" />
+                <span>
+                  {lang === 'ta'
+                    ? 'இப்போதே Google Drive-இல் இணைத்து சேமிக்கவும்'
+                    : `Connect & Push to Drive (${getDesignatedDriveFileName()})`}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setSuccessBanner('');
+                setShowDriveConnectCta(false);
+              }}
+              className="p-1 text-emerald-700 hover:bg-emerald-100 rounded-lg"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -852,7 +989,9 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                       ? lang === 'ta' ? 'காணி உறுதி & அனுமதிப்பத்திர மாதிரி (Land Permits & LDO Model)' : 'Land Permits & Grants Model'
                       : activeType === 'beneficiaries'
                       ? lang === 'ta' ? 'முழுமையான பிரஜைகள் சிஎஸ்வி மாதிரி' : 'General Citizens CSV Model'
-                      : lang === 'ta' ? 'அலுவலக சிஎஸ்வி மாதிரி' : 'Staff / Division CSV Model'}
+                      : activeType === 'divisions'
+                      ? lang === 'ta' ? 'கிராம அலுவலர் பிரிவுகள் சிஎஸ்வி மாதிரி (GN Divisions Model)' : 'GN Divisions CSV Model'
+                      : lang === 'ta' ? 'அலுவலக உத்தியோகத்தர் சிஎஸ்வி மாதிரி' : 'Staff Users CSV Model'}
                   </span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
@@ -860,6 +999,14 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                     ? (lang === 'ta'
                         ? 'காணி அனுமதிப்பத்திரம் (Permit), LDO மானியம், காணித் துண்டு எண், பரப்பு (ஏக்கர்/றூட்/பேர்ச்) விபரங்கள் பதிவு செய்யப்படும்.'
                         : 'Land permits, LDO grants, plot lot numbers, and extent (Acres/Roods/Perches) are recorded.')
+                    : activeType === 'divisions'
+                    ? (lang === 'ta'
+                        ? 'கிராம அலுவலர் பிரிவு குறியீடு, பெயர், பொறுப்பு அதிகாரி மற்றும் மக்கள்/குடும்ப எண்ணிக்கை விபரங்கள் பதிவு செய்யப்படும்.'
+                        : 'GN division codes, Tamil/English names, officer names, population and household counts are recorded.')
+                    : activeType === 'users'
+                    ? (lang === 'ta'
+                        ? 'உத்தியோகத்தர் User ID, கடவுச்சொல், பெயர், பதவி மற்றும் பிரிவு விபரங்கள் பதிவு செய்யப்படும்.'
+                        : 'Staff User ID, password, name, role, and division assignments are imported.')
                     : (lang === 'ta'
                         ? 'ஒவ்வொரு பதிவிலும் குடும்பத்திற்கு பொதுவான Family QR எண் மற்றும் உறவுநிலை கேட்கப்பட்டு ஒரே குடும்பமாக இணைக்கப்படும்.'
                         : 'Each record links to a shared Family QR Code and relationship role connecting the whole household.')}
@@ -1088,6 +1235,82 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                             </span>
                           </td>
                           <td className="p-2.5 font-mono text-slate-600">{row.divisionCode}</td>
+                          <td className="p-2.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePreviewRow(idx)}
+                              className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                              title={lang === 'ta' ? 'இப்பதிவை நீக்கு' : 'Remove row'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : activeType === 'divisions' ? (
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-700 text-[11px] uppercase tracking-wider sticky top-0 border-b border-slate-200">
+                      <tr>
+                        <th className="p-2.5">#</th>
+                        <th className="p-2.5">பிரிவு குறியீடு (Code)</th>
+                        <th className="p-2.5">தமிழ் பெயர்</th>
+                        <th className="p-2.5">English Name</th>
+                        <th className="p-2.5">கிராம அலுவலர்</th>
+                        <th className="p-2.5">மக்கள் / குடும்பங்கள்</th>
+                        <th className="p-2.5 text-right">நீக்கு</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {parsedPreview.map((row: any, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/80">
+                          <td className="p-2.5 text-slate-400 font-mono">{idx + 1}</td>
+                          <td className="p-2.5 font-mono font-bold text-emerald-900">{row.code}</td>
+                          <td className="p-2.5 font-bold text-slate-900">{row.nameTa}</td>
+                          <td className="p-2.5 text-slate-600">{row.nameEn}</td>
+                          <td className="p-2.5 text-slate-700">{row.gnOfficerName || '-'}</td>
+                          <td className="p-2.5 font-mono text-slate-700">{row.population || 0} / {row.households || 0} HH</td>
+                          <td className="p-2.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePreviewRow(idx)}
+                              className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                              title={lang === 'ta' ? 'இப்பதிவை நீக்கு' : 'Remove row'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : activeType === 'users' ? (
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-700 text-[11px] uppercase tracking-wider sticky top-0 border-b border-slate-200">
+                      <tr>
+                        <th className="p-2.5">#</th>
+                        <th className="p-2.5">User ID</th>
+                        <th className="p-2.5">பெயர் (Name)</th>
+                        <th className="p-2.5">பதவி (Role)</th>
+                        <th className="p-2.5">பிரிவு (Division)</th>
+                        <th className="p-2.5">நிலை</th>
+                        <th className="p-2.5 text-right">நீக்கு</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {parsedPreview.map((row: any, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/80">
+                          <td className="p-2.5 text-slate-400 font-mono">{idx + 1}</td>
+                          <td className="p-2.5 font-mono font-bold text-slate-900">{row.id}</td>
+                          <td className="p-2.5 font-bold text-slate-900">{row.name}</td>
+                          <td className="p-2.5 font-mono text-indigo-800">{row.role}</td>
+                          <td className="p-2.5 font-mono text-slate-600">{row.division}</td>
+                          <td className="p-2.5">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-900">
+                              {row.status}
+                            </span>
+                          </td>
                           <td className="p-2.5 text-right">
                             <button
                               type="button"
@@ -1367,7 +1590,7 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                               if (selectedRegisteredIds.length === currentCategoryItems.length) {
                                 setSelectedRegisteredIds([]);
                               } else {
-                                setSelectedRegisteredIds(currentCategoryItems.map((c: any) => c.id || c.nic || c.permitNo));
+                                setSelectedRegisteredIds(currentCategoryItems.map((c: any) => c.id || c.code || c.nic || c.permitNo));
                               }
                             }}
                             className="p-1 hover:text-emerald-700"
@@ -1384,15 +1607,15 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                       <th className="p-2.5">#</th>
                       <th className="p-2.5">அடையாளம் / குறியீடு</th>
                       <th className="p-2.5">பெயர் / விபரம்</th>
-                      <th className="p-2.5">தேசிய அடையாள அட்டை (NIC)</th>
-                      <th className="p-2.5">வயது / திகதி</th>
+                      <th className="p-2.5">தேசிய அடையாள அட்டை / விபரம்</th>
+                      <th className="p-2.5">வயது / திகதி / எண்ணிக்கை</th>
                       <th className="p-2.5">பிரிவு / நிலை</th>
                       {canDelete && <th className="p-2.5 text-right">நீக்குக</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {currentCategoryItems.slice(0, 100).map((item: any, idx: number) => {
-                      const itemKey = item.id || item.nic || item.permitNo || String(idx);
+                      const itemKey = item.id || item.code || item.nic || item.permitNo || String(idx);
                       const isChecked = selectedRegisteredIds.includes(itemKey);
                       const age = item.dob || item.nic ? calculateAge(item.dob, item.nic) : null;
 
@@ -1416,33 +1639,35 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
                           )}
                           <td className="p-2.5 text-slate-400 font-mono">{idx + 1}</td>
                           <td className="p-2.5 font-mono font-bold text-slate-800">
-                            {item.familyCode || item.permitNo || item.batchId || item.id}
+                            {item.familyCode || item.permitNo || item.batchId || item.code || item.id}
                           </td>
                           <td className="p-2.5">
                             <div className="font-bold text-slate-900">
-                              {item.nameTa || item.ownerNameTa || item.motherNameTa || item.beneficiaryName || item.nameEn || '-'}
+                              {item.nameTa || item.ownerNameTa || item.motherNameTa || item.beneficiaryName || item.name || item.nameEn || '-'}
                             </div>
-                            {(item.nameEn || item.aidDescription) && (
+                            {(item.nameEn || item.aidDescription || item.gnOfficerName) && (
                               <div className="text-[10px] text-slate-500">
-                                {item.aidDescription || item.nameEn}
+                                {item.aidDescription || item.gnOfficerName || item.nameEn}
                               </div>
                             )}
                           </td>
                           <td className="p-2.5 font-mono text-slate-700 font-semibold">
-                            {item.nic || item.ownerNic || item.motherNic || item.beneficiaryNic || '-'}
+                            {item.nic || item.ownerNic || item.motherNic || item.beneficiaryNic || item.role || (item.households !== undefined ? `${item.households} HH` : '-')}
                           </td>
                           <td className="p-2.5 font-mono text-slate-700">
                             {age !== null && age > 0 ? (
                               <span className="font-semibold text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
                                 {age} {lang === 'ta' ? 'வயது' : 'yrs'}
                               </span>
+                            ) : item.population !== undefined ? (
+                              `${item.population} pop`
                             ) : (
-                              item.distributionDate || item.registrationDate || '-'
+                              item.distributionDate || item.registrationDate || item.createdAt?.slice(0, 10) || '-'
                             )}
                           </td>
                           <td className="p-2.5">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800">
-                              {item.divisionCode || item.permitStatus || item.status || 'Active'}
+                              {item.divisionCode || item.division || item.permitStatus || item.status || 'Active'}
                             </span>
                           </td>
                           {canDelete && (

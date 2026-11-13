@@ -362,7 +362,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-3.5 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0 bg-slate-950/60">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="p-1 bg-white rounded-full shrink-0 shadow-xs">
-              <VaharaiLogo size={28} className="w-7 h-7" />
+              <VaharaiLogo size={28} className="w-7 h-7" dsDivisionId={effectiveDsId || 'DISTRICT_HQ'} />
             </div>
             {isOpen && (
               <div className="min-w-0 leading-tight">

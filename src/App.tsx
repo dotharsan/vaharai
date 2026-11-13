@@ -46,6 +46,7 @@ import {
   isServerApiAvailable,
   createDatabaseSnapshot,
   getDsDivisionById,
+  getLastLocalMutationAt,
 } from './services/storage';
 import {
   getActiveUserSession,
@@ -61,6 +62,9 @@ import {
   onDriveSyncStatusChange,
   DriveSyncStatus,
   getDriveSyncStatus,
+  isCustomDesignatedFileSet,
+  getGoogleSheetUrl,
+  isDriveAutoSyncEnabled,
 } from './services/googleDrive';
 import { Header } from './components/Header';
 import { LoginView } from './components/LoginView';
@@ -156,14 +160,21 @@ export default function App() {
     }
   }, []);
 
-  // Listen for Google Drive sync status updates
+  // Listen for Google Drive sync status & auth state updates (including 401 expiry / popup login)
   useEffect(() => {
-    const unsubscribe = onDriveSyncStatusChange((st) => {
-      setDriveSyncStatus(st);
+    const syncAuthUi = () => {
       setIsDriveConnected(isGoogleDriveAuthenticated());
       setDriveUser(getGoogleDriveUser());
+    };
+    const unsubscribe = onDriveSyncStatusChange((st) => {
+      setDriveSyncStatus(st);
+      syncAuthUi();
     });
-    return unsubscribe;
+    window.addEventListener('vaharai_drive_auth_changed', syncAuthUi);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('vaharai_drive_auth_changed', syncAuthUi);
+    };
   }, []);
 
   // Real-Time Cross-Tab / Cross-Window Synchronization on the same machine
@@ -200,23 +211,96 @@ export default function App() {
   // Central Google Drive & Server Synchronization across multiple office computers
   useEffect(() => {
     let isMounted = true;
+    let lastSyncedMutationAt = getLastLocalMutationAt();
 
-    // Boot: Attempt to load from the designated Google Drive file or Google Sheet via Server Proxy
+    const mergeByKey = <T extends Record<string, any>>(local: T[], remote: T[], keyFn: (x: T) => string, skipFn?: (x: T) => boolean): T[] => {
+      const map = new Map<string, T>();
+      remote.forEach((item) => {
+        if (skipFn && skipFn(item)) return;
+        const k = keyFn(item);
+        if (k) map.set(k, item);
+      });
+      local.forEach((item) => {
+        if (skipFn && skipFn(item)) return;
+        const k = keyFn(item);
+        if (k) map.set(k, item);
+      });
+      return Array.from(map.values());
+    };
+
+    const hydrateAllFromRemote = (remote: any) => {
+      if (!remote || !isMounted) return;
+      if (Array.isArray(remote.dsDivisions) && remote.dsDivisions.length > 0) {
+        try {
+          localStorage.setItem('vaharai_ds_secretariats_v1', JSON.stringify(remote.dsDivisions));
+        } catch { /* ignore */ }
+      }
+      if (typeof remote.districtLogo === 'string' && remote.districtLogo.trim()) {
+        try {
+          localStorage.setItem('vaharai_ds_district_logo_v1', remote.districtLogo.trim());
+        } catch { /* ignore */ }
+      }
+      if (Array.isArray(remote.divisions) && remote.divisions.length > 0) {
+        const mergedDivs = mergeByKey(loadDivisions(), remote.divisions, (d) => (d.code || '').trim().toUpperCase());
+        saveDivisions(mergedDivs);
+        setDivisions(mergedDivs);
+      }
+      if (Array.isArray(remote.beneficiaries) && remote.beneficiaries.length > 0) {
+        const mergedBens = mergeByKey(
+          loadBeneficiaries(),
+          remote.beneficiaries,
+          (b) => b.id || b.nic,
+          (b) => isRecordDeleted(b.id, b.nic)
+        );
+        saveBeneficiaries(mergedBens, false);
+        setBeneficiaries(mergedBens);
+      }
+      if (Array.isArray(remote.households) && remote.households.length > 0) {
+        const mergedHouseholds = mergeByKey(loadHouseholds(), remote.households, (h) => h.familyCode || h.id);
+        saveHouseholds(mergedHouseholds);
+        setHouseholds(mergedHouseholds);
+      }
+      if (Array.isArray(remote.landRecords) && remote.landRecords.length > 0) {
+        const mergedLand = mergeByKey(loadLandRecords(), remote.landRecords, (l) => l.id || l.permitNo);
+        saveLandRecords(mergedLand);
+        setLandRecords(mergedLand);
+      }
+      if (Array.isArray(remote.pregnantMothers) && remote.pregnantMothers.length > 0) {
+        const mergedMat = mergeByKey(loadPregnantMothers(), remote.pregnantMothers, (m) => m.id || m.nic, (m) => isRecordDeleted(m.id, m.nic));
+        savePregnantMothers(mergedMat);
+        setPregnantMothers(mergedMat);
+      }
+      if (Array.isArray(remote.assistance) && remote.assistance.length > 0) {
+        const mergedAid = mergeByKey(loadAssistanceRecords(), remote.assistance, (a) => a.id);
+        saveAssistanceRecords(mergedAid);
+        setAssistanceRecords(mergedAid);
+      }
+      if (Array.isArray(remote.tokens) && remote.tokens.length > 0) {
+        const mergedTokens = mergeByKey(loadTokens(), remote.tokens, (t) => t.id);
+        saveTokens(mergedTokens);
+        setTokens(mergedTokens);
+      }
+      if (Array.isArray(remote.petitions) && remote.petitions.length > 0) {
+        const mergedPetitions = mergeByKey(loadPetitions(), remote.petitions, (p) => p.id);
+        savePetitions(mergedPetitions);
+        setPetitions(mergedPetitions);
+      }
+      if (Array.isArray(remote.users) && remote.users.length > 0) {
+        const mergedUsers = mergeByKey(loadUsers(), remote.users, (u) => u.id);
+        saveUsers(mergedUsers);
+        setUsers(mergedUsers);
+      }
+    };
+
+    // Boot: Only auto-pull designated Drive if authenticated, custom file selected, or Google Sheet URL linked
     const pullFromDesignatedDrive = async () => {
+      if (!isGoogleDriveAuthenticated() && !isCustomDesignatedFileSet() && !getGoogleSheetUrl()) {
+        return;
+      }
       try {
         const driveData = await fetchFromDesignatedDriveFile();
-        if (driveData && isMounted && Array.isArray(driveData.beneficiaries) && driveData.beneficiaries.length > 0) {
-          const localItems = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
-          // Merge: Preserve all local newly added records, add any remote records that haven't been deleted
-          const map = new Map<string, Beneficiary>();
-          driveData.beneficiaries
-            .filter((b: Beneficiary) => !isRecordDeleted(b.id, b.nic))
-            .forEach((b: Beneficiary) => map.set(b.id || b.nic, b));
-          localItems.forEach((b: Beneficiary) => map.set(b.id || b.nic, b));
-          const merged = Array.from(map.values()).filter((b) => !isRecordDeleted(b.id, b.nic));
-          saveBeneficiaries(merged, false);
-          setBeneficiaries(merged);
-          console.log(`[Google Drive] Boot: Auto-loaded ${merged.length} records.`);
+        if (driveData && isMounted) {
+          hydrateAllFromRemote(driveData);
         }
       } catch (e) {
         console.warn('[Google Drive] Boot fetch warning:', e);
@@ -231,49 +315,51 @@ export default function App() {
         if (isServerApiAvailable()) {
           const central = await fetchCentralDatabase();
           if (central && isMounted) {
-            if (Array.isArray(central.beneficiaries) && central.beneficiaries.length > 0) {
-              const localItems = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
-              const map = new Map<string, Beneficiary>();
-              central.beneficiaries
-                .filter((b: Beneficiary) => !isRecordDeleted(b.id, b.nic))
-                .forEach((b: Beneficiary) => map.set(b.id || b.nic, b));
-              localItems.forEach((b: Beneficiary) => map.set(b.id || b.nic, b));
-              const merged = Array.from(map.values()).filter((b) => !isRecordDeleted(b.id, b.nic));
-              saveBeneficiaries(merged, false);
-              setBeneficiaries(merged);
-            }
+            hydrateAllFromRemote(central);
           }
         }
       } catch (err) {
         console.warn('Initial central sync failed:', err);
       }
+      lastSyncedMutationAt = getLastLocalMutationAt();
     };
 
     syncInit();
 
-    // Polling interval: NEVER delete or clobber local data!
-    // Safely merges new records and ensures newly uploaded CSVs are preserved!
+    // Polling interval: NEVER delete or clobber local CSV data!
     const syncInterval = setInterval(async () => {
       if (!isMounted) return;
 
-      // 1. Google Drive sync check
+      const currentMutationAt = getLastLocalMutationAt();
+      const hasLocalChanges = currentMutationAt > lastSyncedMutationAt;
+
+      // 1. Push any local mutations to central server immediately
+      if (hasLocalChanges && isServerApiAvailable()) {
+        const pushed = await pushToCentralDatabase(createDatabaseSnapshot());
+        if (pushed) {
+          lastSyncedMutationAt = currentMutationAt;
+        }
+      }
+
+      // 2. Google Drive sync check (only when user is authenticated)
       if (isGoogleDriveAuthenticated()) {
         try {
-          const driveData = await fetchFromDesignatedDriveFile();
-          if (driveData && isMounted && Array.isArray(driveData.beneficiaries)) {
-            const local = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
-            const existingNics = new Set(local.map((b) => b.nic));
-            const existingIds = new Set(local.map((b) => b.id));
-            const newFromRemote = driveData.beneficiaries.filter(
-              (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingNics.has(b.nic) && !existingIds.has(b.id)
-            );
-            if (newFromRemote.length > 0) {
-              const merged = [...local, ...newFromRemote];
-              saveBeneficiaries(merged, false);
-              setBeneficiaries(merged);
-            } else if (local.length !== driveData.beneficiaries.length) {
-              // Local has changes (new CSV or deletions) -> sync to Google Drive!
-              await saveToDesignatedDriveFile(createDatabaseSnapshot());
+          if (hasLocalChanges && isDriveAutoSyncEnabled()) {
+            await saveToDesignatedDriveFile(createDatabaseSnapshot());
+            lastSyncedMutationAt = currentMutationAt;
+          } else {
+            const driveData = await fetchFromDesignatedDriveFile();
+            if (driveData && isMounted && Array.isArray(driveData.beneficiaries)) {
+              const local = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
+              const existingKeys = new Set(local.map((b) => b.id || b.nic));
+              const newFromRemote = driveData.beneficiaries.filter(
+                (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingKeys.has(b.id || b.nic)
+              );
+              if (newFromRemote.length > 0) {
+                const merged = [...local, ...newFromRemote];
+                saveBeneficiaries(merged, false);
+                setBeneficiaries(merged);
+              }
             }
           }
         } catch {
@@ -281,25 +367,21 @@ export default function App() {
         }
       }
 
-      // 2. Central Server sync check
-      if (isServerApiAvailable()) {
+      // 3. Central Server incremental pull
+      if (isServerApiAvailable() && !hasLocalChanges) {
         try {
           const central = await fetchCentralDatabase();
           if (central && isMounted) {
             const local = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
             if (Array.isArray(central.beneficiaries)) {
-              const existingNics = new Set(local.map((b) => b.nic));
-              const existingIds = new Set(local.map((b) => b.id));
+              const existingKeys = new Set(local.map((b) => b.id || b.nic));
               const newFromCentral = central.beneficiaries.filter(
-                (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingNics.has(b.nic) && !existingIds.has(b.id)
+                (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingKeys.has(b.id || b.nic)
               );
               if (newFromCentral.length > 0) {
                 const merged = [...local, ...newFromCentral];
                 saveBeneficiaries(merged, false);
                 setBeneficiaries(merged);
-              } else if (local.length !== central.beneficiaries.length) {
-                // Local has changes (new CSV or deletions) -> push to central server!
-                await pushToCentralDatabase(createDatabaseSnapshot());
               }
             }
             if (Array.isArray(central.tokens) && central.tokens.length > 0) {
@@ -893,6 +975,10 @@ export default function App() {
             divisions={scopedDivisions}
             users={scopedUsers}
             auditLogs={auditLogs}
+            assistanceRecords={scopedAssistanceRecords}
+            pregnantMothers={scopedPregnantMothers}
+            landRecords={scopedLandRecords}
+            households={scopedHouseholds}
             currentUser={currentUser}
             lang={lang}
             onNavigate={(tab) => setCurrentTab(tab)}
@@ -1070,14 +1156,18 @@ export default function App() {
             assistanceRecords={scopedAssistanceRecords}
             pregnantMothers={scopedPregnantMothers}
             landRecords={scopedLandRecords}
+            households={scopedHouseholds}
             currentUser={currentUser}
             lang={lang}
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
             onUpdateUsers={handleUpdateUsers}
+            onUpdateDivisions={handleUpdateDivisions}
             onUpdateAssistanceRecords={handleUpdateAssistanceRecords}
             onUpdatePregnantMothers={handleUpdatePregnantMothers}
             onUpdateLandRecords={handleUpdateLandRecords}
+            onUpdateHouseholds={handleUpdateHouseholds}
             onAuditLog={handleAuditLog}
+            onNavigateToDrive={() => setCurrentTab('drive')}
           />
         )}
 

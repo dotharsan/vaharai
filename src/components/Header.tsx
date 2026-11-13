@@ -161,7 +161,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="flex items-center gap-2">
             <div className="p-0.5 bg-white rounded-full shadow-xs shrink-0">
-              <VaharaiLogo size={28} className="w-7 h-7" />
+              <VaharaiLogo size={28} className="w-7 h-7" dsDivisionId={effectiveDsId || 'DISTRICT_HQ'} />
             </div>
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-2">

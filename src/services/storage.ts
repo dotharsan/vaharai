@@ -22,7 +22,8 @@ import {
   BATTICALOA_DS_DIVISIONS,
 } from '../types';
 import initialDatabaseSeed from '../data/central_database.json';
-import { scheduleAutoDriveSync } from './googleDrive';
+import { isGoogleDriveAuthenticated } from './auth';
+import { scheduleAutoDriveSync, getDesignatedDriveFileId, getDesignatedDriveFileName } from './googleDrive';
 import { parseSriLankanNic } from '../utils/nicParser';
 
 const STORAGE_KEYS = {
@@ -41,6 +42,7 @@ const STORAGE_KEYS = {
   DELETED_IDS: 'vaharai_ds_deleted_ids_v6',
   INITIALIZED: 'vaharai_ds_initialized_v6',
   DS_DIVISIONS: 'vaharai_ds_secretariats_v1',
+  DISTRICT_LOGO: 'vaharai_ds_district_logo_v1',
 };
 
 // ================= PERMANENT DELETION & TOMBSTONE TRACKING (Requirement 01) ================= //
@@ -172,17 +174,23 @@ export const calculateAge = (dob?: string, nic?: string): number => {
 };
 
 // System-generated Citizen ID
+let batchSeqSalt = 0;
+
 export const generateSystemCitizenId = (divisionCode: string = '211', count: number = 1): string => {
   const year = new Date().getFullYear();
+  const cleanDiv = (divisionCode || '211').trim().toUpperCase();
   const seq = String(count).padStart(4, '0');
-  return `VHR-${divisionCode}-${year}-${seq}`;
+  return `VHR-${cleanDiv}-${year}-${seq}`;
 };
 
-// Provisional Computer NIC for citizens without card
+// Provisional Computer NIC for citizens without card (collision-safe across bulk CSV imports)
 export const generateProvisionalNic = (divisionCode: string = '211'): string => {
   const year = new Date().getFullYear();
-  const randomSuffix = Math.floor(Math.random() * 90000 + 10000);
-  return `TNIC-${divisionCode}-${year}-${randomSuffix}`;
+  const cleanDiv = (divisionCode || '211').trim().toUpperCase();
+  batchSeqSalt = (batchSeqSalt + 1) % 1000;
+  const seqPart = String(batchSeqSalt).padStart(3, '0');
+  const randomSuffix = Math.floor(Math.random() * 90 + 10);
+  return `TNIC-${cleanDiv}-${year}-${seqPart}${randomSuffix}`;
 };
 
 // Strictly unique Family Code & Master QR Payload generator (Requirement 02)
@@ -542,25 +550,76 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
   },
 ];
 
-// Helper to safely read from localStorage
+// In-memory authoritative fallback store so QuotaExceededError never drops uploaded CSV data
+const memoryStore = new Map<string, any>();
+const failedStorageKeys = new Set<string>();
+let storageQuotaWarning = false;
+let lastLocalMutationAt = 0;
+
+export const getLastLocalMutationAt = (): number => lastLocalMutationAt;
+export const hasStorageQuotaWarning = (): boolean => storageQuotaWarning;
+
+// Helper to safely read from localStorage with in-memory fallback
 export const getStoredData = <T>(key: string, fallback: T): T => {
+  if (failedStorageKeys.has(key) && memoryStore.has(key)) {
+    return memoryStore.get(key) as T;
+  }
   try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return memoryStore.has(key) ? (memoryStore.get(key) as T) : fallback;
+    }
     const raw = localStorage.getItem(key);
     if (raw === null || raw === undefined) {
-      localStorage.setItem(key, JSON.stringify(fallback));
+      if (memoryStore.has(key)) {
+        return memoryStore.get(key) as T;
+      }
+      memoryStore.set(key, fallback);
+      try {
+        localStorage.setItem(key, JSON.stringify(fallback));
+      } catch {
+        // ignore quota error when writing fallback
+      }
       return fallback;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as T;
+    memoryStore.set(key, parsed);
+    return parsed;
   } catch {
-    return fallback;
+    return memoryStore.has(key) ? (memoryStore.get(key) as T) : fallback;
   }
 };
 
 export const setStoredData = <T>(key: string, data: T): void => {
+  memoryStore.set(key, data);
+  lastLocalMutationAt = Date.now();
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return;
+  }
+  const serialized = JSON.stringify(data);
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    localStorage.setItem(key, serialized);
+    failedStorageKeys.delete(key);
   } catch (err) {
-    console.error(`Failed to write to localStorage for key ${key}:`, err);
+    storageQuotaWarning = true;
+    console.warn(`localStorage write warning for key ${key}, compacting audit logs and retrying:`, err);
+    try {
+      // Compact non-critical audit logs first to free quota for citizen/CSV records
+      if (key !== STORAGE_KEYS.AUDIT_LOGS) {
+        const logsRaw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
+        if (logsRaw) {
+          const parsedLogs = JSON.parse(logsRaw);
+          if (Array.isArray(parsedLogs) && parsedLogs.length > 30) {
+            localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(parsedLogs.slice(0, 30)));
+          }
+        }
+      }
+      localStorage.setItem(key, serialized);
+      failedStorageKeys.delete(key);
+    } catch (retryErr) {
+      // Keep authoritative copy in memoryStore so handleDatabaseReload never reverts to stale data
+      failedStorageKeys.add(key);
+      console.error(`Failed to write to localStorage for key ${key} (using in-memory store + central server):`, retryErr);
+    }
   }
 };
 
@@ -690,14 +749,15 @@ export const getPregnancyCountForNic = (nic: string): number => {
 };
 
 export const loadBeneficiaries = (): Beneficiary[] => {
-  let stored = getStoredData<Beneficiary[]>(STORAGE_KEYS.BENEFICIARIES, DEFAULT_BENEFICIARIES);
-  if ((!stored || stored.length === 0) && DEFAULT_BENEFICIARIES && DEFAULT_BENEFICIARIES.length > 0) {
+  const wasCleared = typeof window !== 'undefined' && typeof localStorage !== 'undefined' && localStorage.getItem('vaharai_ds_beneficiaries_cleared') === 'true';
+  let stored = getStoredData<Beneficiary[]>(STORAGE_KEYS.BENEFICIARIES, wasCleared ? [] : DEFAULT_BENEFICIARIES);
+  if (!wasCleared && (!stored || stored.length === 0) && DEFAULT_BENEFICIARIES && DEFAULT_BENEFICIARIES.length > 0) {
     stored = DEFAULT_BENEFICIARIES;
     setStoredData(STORAGE_KEYS.BENEFICIARIES, stored);
   }
   const deletedSet = getDeletedIdsSet();
   // Filter out any that were deleted/tombstoned so deletions stay permanently deleted on refresh
-  const filtered = stored.filter((b) => !deletedSet.has(b.id) && !(b.nic && deletedSet.has(b.nic)));
+  const filtered = (stored || []).filter((b) => !deletedSet.has(b.id) && !(b.nic && deletedSet.has(b.nic)));
   return filtered.map((b) => {
     let resolvedDob = b.dob;
     let resolvedGender = b.gender;
@@ -711,10 +771,12 @@ export const loadBeneficiaries = (): Beneficiary[] => {
         }
       }
     }
-    const familyCode = b.familyCode || (b.householdNo ? `FAM-${b.householdNo.replace(/^HH-/, '')}` : `FAM-${b.divisionCode}-001`);
-    const familyQrPayload = b.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${b.divisionCode}`;
+    const cleanDiv = (b.divisionCode || '211').trim().toUpperCase();
+    const familyCode = b.familyCode || (b.householdNo ? `FAM-${b.householdNo.replace(/^HH-/, '')}` : `FAM-${cleanDiv}-001`);
+    const familyQrPayload = b.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${cleanDiv}`;
     return {
       ...b,
+      divisionCode: cleanDiv,
       dob: resolvedDob,
       gender: resolvedGender,
       familyCode,
@@ -741,6 +803,17 @@ export const saveBeneficiaries = (items: Beneficiary[], trackDeletions: boolean 
   items.forEach((b) => {
     removeDeletedId(b.id, b.nic);
   });
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      if (items.length > 0) {
+        localStorage.removeItem('vaharai_ds_beneficiaries_cleared');
+      } else {
+        localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
+      }
+    } catch {
+      // ignore
+    }
+  }
   setStoredData(STORAGE_KEYS.BENEFICIARIES, items);
   scheduleCentralSync();
 };
@@ -757,6 +830,13 @@ export const deleteSingleBeneficiary = (id: string, nic?: string) => {
 export const clearAllBeneficiariesPermanently = () => {
   const current = getStoredData<Beneficiary[]>(STORAGE_KEYS.BENEFICIARIES, []);
   recordDeletedIds(current.map((b) => b.id).concat(current.map((b) => b.nic).filter(Boolean)));
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
+    } catch {
+      // ignore
+    }
+  }
   setStoredData(STORAGE_KEYS.BENEFICIARIES, []);
   scheduleCentralSync();
   notifyCrossTabSync('ALL_BENEFICIARIES_CLEARED');
@@ -1225,7 +1305,58 @@ export const loadDsDivisions = (): DSDivision[] => {
 
 export const saveDsDivisions = (dsList: DSDivision[]) => {
   setStoredData(STORAGE_KEYS.DS_DIVISIONS, dsList);
+  scheduleCentralSync();
   notifyCrossTabSync('DS_DIVISIONS_UPDATED');
+};
+
+export const getDistrictLogo = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.DISTRICT_LOGO);
+    return val && val.trim() ? val : null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveDistrictLogo = (logoUrl: string | null): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    if (logoUrl && logoUrl.trim()) {
+      localStorage.setItem(STORAGE_KEYS.DISTRICT_LOGO, logoUrl.trim());
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.DISTRICT_LOGO);
+    }
+  } catch {
+    // ignore quota error
+  }
+  scheduleCentralSync();
+  notifyCrossTabSync('LOGO_UPDATED');
+};
+
+export const getDsLogo = (dsDivisionId?: string | null): string | null => {
+  if (!dsDivisionId || dsDivisionId === 'DISTRICT_HQ' || dsDivisionId === 'DISTRICT' || dsDivisionId === 'ALL') {
+    return getDistrictLogo();
+  }
+  const found = loadDsDivisions().find((d) => d.id === dsDivisionId);
+  return found?.logoUrl && found.logoUrl.trim() ? found.logoUrl : null;
+};
+
+export const saveDsLogo = (dsDivisionId: string, logoUrl: string | null): DSDivision[] => {
+  if (!dsDivisionId || dsDivisionId === 'DISTRICT_HQ' || dsDivisionId === 'DISTRICT' || dsDivisionId === 'ALL') {
+    saveDistrictLogo(logoUrl);
+    return loadDsDivisions();
+  }
+  const list = loadDsDivisions();
+  const updated = list.map((d) =>
+    d.id === dsDivisionId
+      ? { ...d, logoUrl: logoUrl && logoUrl.trim() ? logoUrl.trim() : undefined }
+      : d
+  );
+  setStoredData(STORAGE_KEYS.DS_DIVISIONS, updated);
+  scheduleCentralSync();
+  notifyCrossTabSync('LOGO_UPDATED');
+  return updated;
 };
 
 export const getDsDivisions = (): DSDivision[] => {
@@ -1326,17 +1457,24 @@ export const getStorageLocationsInfo = (): StorageLocationInfo => {
   const bList = loadBeneficiaries();
   const tList = loadTokens();
   const aList = loadAssistanceRecords();
+  const driveAuthed = isGoogleDriveAuthenticated();
+  const designatedId = getDesignatedDriveFileId();
+  const designatedName = getDesignatedDriveFileName();
 
   let keysCount = 0;
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     keysCount = Object.keys(localStorage).filter((k) => k.startsWith('vaharai_ds_')).length;
   }
 
   return {
     browserStorage: {
-      status: 'ACTIVE',
-      descriptionTa: 'இந்த கணினி உலாவி பாதுகாப்பான உள்ளக களஞ்சியத்தில் (Browser LocalStorage) தகவல்கள் உடனடியாக நிரந்தரமாக சேமிக்கப்படுகின்றன.',
-      descriptionEn: 'Data is immediately and permanently persisted in this computer browser localStorage.',
+      status: storageQuotaWarning ? 'WARNING' : 'ACTIVE',
+      descriptionTa: storageQuotaWarning
+        ? 'உலாவி சேமிப்பக அளவு நிரம்பியுள்ளதால் புதிய தரவுகள் நினைவகம் மற்றும் மத்திய சேவையகத்தில் சேமிக்கப்படுகின்றன.'
+        : 'இந்த கணினி உலாவி பாதுகாப்பான உள்ளக களஞ்சியத்தில் (Browser LocalStorage) தகவல்கள் உடனடியாக நிரந்தரமாக சேமிக்கப்படுகின்றன.',
+      descriptionEn: storageQuotaWarning
+        ? 'Browser localStorage quota reached; active records are held safely in memory and synced with the central server.'
+        : 'Data is immediately and permanently persisted in this computer browser localStorage.',
       keysCount,
       beneficiariesCount: bList.length,
       tokensCount: tList.length,
@@ -1349,11 +1487,15 @@ export const getStorageLocationsInfo = (): StorageLocationInfo => {
       descriptionEn: 'Synchronized with Central Divisional Secretariat Database API.',
     },
     cloudGoogleDrive: {
-      status: 'CONNECTED',
-      fileId: 'vaharai_ds_master_database.json',
-      fileName: 'vaharai_ds_master_central_database.json',
-      descriptionTa: 'பிரதேச செயலகத்தின் பாதுகாப்பான Google Drive கோப்பில் தானியங்கியாக கிளவுட் காப்புப்பிரதி (Cloud Backup) செய்யப்படுகிறது.',
-      descriptionEn: 'Automatically backed up to the official DS Google Drive file.',
+      status: driveAuthed ? 'CONNECTED' : 'NOT_CONNECTED',
+      fileId: designatedId,
+      fileName: designatedName,
+      descriptionTa: driveAuthed
+        ? `கூகிள் டிரைவ் (${designatedName}) இணைக்கப்பட்டுள்ளது.`
+        : 'கூகிள் டிரைவ் இன்னும் இணைக்கப்படவில்லை! Drive Backup பிரிவில் உங்கள் Google கணக்கை இணைத்த பின்னரே உங்கள் டிரைவ் JSON கோப்பு புதுப்பிக்கப்படும்.',
+      descriptionEn: driveAuthed
+        ? `Connected to Google Drive target file (${designatedName}).`
+        : 'Google Drive is NOT connected yet. Connect your Google account in Drive Backup to write records into your Drive JSON file.',
     },
   };
 };
@@ -1376,7 +1518,7 @@ export const checkDuplicateAssistance = (
   currentRecords?: AssistanceRecord[],
   currentDistributedDate?: string
 ): DuplicateAidCheckResult => {
-  const records = currentRecords && currentRecords.length > 0 ? currentRecords : loadAssistanceRecords();
+  const records = currentRecords !== undefined ? currentRecords : loadAssistanceRecords();
   
   const famCodeClean = familyCode?.trim().toUpperCase();
   const nicClean = nic?.trim().toLowerCase();
@@ -1454,6 +1596,8 @@ export const createDatabaseSnapshot = () => {
     beneficiaries: loadBeneficiaries(),
     tokens: loadTokens(),
     divisions: loadDivisions(),
+    dsDivisions: loadDsDivisions(),
+    districtLogo: getDistrictLogo(),
     auditLogs: loadAuditLogs(),
     assistance: loadAssistanceRecords(),
     pregnantMothers: loadPregnantMothers(),
@@ -1465,13 +1609,41 @@ export const createDatabaseSnapshot = () => {
 };
 
 export const restoreDatabaseFromSnapshot = (snapshot: any): boolean => {
-  if (!snapshot || !Array.isArray(snapshot.users)) {
+  if (!snapshot || (!Array.isArray(snapshot.users) && !Array.isArray(snapshot.beneficiaries) && !Array.isArray(snapshot.divisions))) {
     throw new Error('Invalid backup file structure.');
   }
   if (Array.isArray(snapshot.users)) setStoredData(STORAGE_KEYS.USERS, snapshot.users);
-  if (Array.isArray(snapshot.beneficiaries)) setStoredData(STORAGE_KEYS.BENEFICIARIES, snapshot.beneficiaries);
+  if (Array.isArray(snapshot.beneficiaries)) {
+    snapshot.beneficiaries.forEach((b: any) => removeDeletedId(b?.id, b?.nic));
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        if (snapshot.beneficiaries.length > 0) {
+          localStorage.removeItem('vaharai_ds_beneficiaries_cleared');
+        } else {
+          localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
+        }
+      } catch {
+        // ignore
+      }
+    }
+    setStoredData(STORAGE_KEYS.BENEFICIARIES, snapshot.beneficiaries);
+  }
   if (Array.isArray(snapshot.tokens)) setStoredData(STORAGE_KEYS.TOKENS, snapshot.tokens);
   if (Array.isArray(snapshot.divisions)) setStoredData(STORAGE_KEYS.DIVISIONS, snapshot.divisions);
+  if (Array.isArray(snapshot.dsDivisions)) setStoredData(STORAGE_KEYS.DS_DIVISIONS, snapshot.dsDivisions);
+  if (typeof snapshot.districtLogo === 'string' && snapshot.districtLogo.trim()) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.DISTRICT_LOGO, snapshot.districtLogo.trim());
+    } catch {
+      // ignore
+    }
+  } else if (snapshot.districtLogo === null) {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.DISTRICT_LOGO);
+    } catch {
+      // ignore
+    }
+  }
   if (Array.isArray(snapshot.assistance)) setStoredData(STORAGE_KEYS.ASSISTANCE, snapshot.assistance);
   if (Array.isArray(snapshot.auditLogs)) setStoredData(STORAGE_KEYS.AUDIT_LOGS, snapshot.auditLogs);
   if (Array.isArray(snapshot.pregnantMothers)) setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, snapshot.pregnantMothers);
@@ -1479,7 +1651,7 @@ export const restoreDatabaseFromSnapshot = (snapshot: any): boolean => {
   if (Array.isArray(snapshot.households)) setStoredData(STORAGE_KEYS.HOUSEHOLDS, snapshot.households);
   if (snapshot.povertyWeights) setStoredData(STORAGE_KEYS.POVERTY_WEIGHTS, snapshot.povertyWeights);
   if (Array.isArray(snapshot.petitions)) setStoredData(STORAGE_KEYS.PETITIONS, snapshot.petitions);
-  
+
   notifyCrossTabSync('DATABASE_RESTORED');
   return true;
 };
@@ -1527,20 +1699,22 @@ export const scheduleCentralSync = () => {
     if (serverApiAvailable !== false) {
       pushToCentralDatabase(snapshot);
     }
-  }, 800);
+  }, 500);
 };
 
 export const fetchCentralDatabase = async (): Promise<any | null> => {
-  // If we already know /api/database does not exist on this host (e.g. Vercel static deployment), don't spam 404
   if (serverApiAvailable === false) {
     return null;
   }
 
   try {
     const res = await fetch('/api/database');
-    if (!res.ok) {
+    if (res.status === 404) {
       serverApiAvailable = false;
-      console.info(`[Vaharai DS] Central /api/database returned status ${res.status}. Active mode: Cloud Drive & Local Storage.`);
+      console.info(`[Vaharai DS] Central /api/database returned 404. Active mode: Cloud Drive & Local Storage.`);
+      return null;
+    }
+    if (!res.ok) {
       return null;
     }
     serverApiAvailable = true;
@@ -1550,7 +1724,6 @@ export const fetchCentralDatabase = async (): Promise<any | null> => {
     }
     return null;
   } catch {
-    serverApiAvailable = false;
     return null;
   }
 };
@@ -1567,14 +1740,18 @@ export const pushToCentralDatabase = async (snapshot?: any): Promise<boolean> =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
-    if (!res.ok) {
+    if (res.status === 404) {
       serverApiAvailable = false;
+      return false;
+    }
+    if (!res.ok) {
+      console.warn(`[Vaharai DS] POST /api/database returned ${res.status}`);
       return false;
     }
     serverApiAvailable = true;
     return true;
-  } catch {
-    serverApiAvailable = false;
+  } catch (err) {
+    console.warn('[Vaharai DS] POST /api/database failed:', err);
     return false;
   }
 };

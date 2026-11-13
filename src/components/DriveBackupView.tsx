@@ -13,6 +13,7 @@ import {
   DEFAULT_DESIGNATED_FILE_ID,
   DEFAULT_DESIGNATED_FILE_URL,
   getDesignatedDriveFileId,
+  getDesignatedDriveFileName,
   setDesignatedDriveFileId,
   isDriveAutoSyncEnabled,
   setDriveAutoSyncEnabled,
@@ -35,6 +36,7 @@ import {
   getCentralDatabaseStatus,
   pushToCentralDatabase,
 } from '../services/storage';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 interface DriveBackupViewProps {
   currentUser: User;
@@ -64,36 +66,58 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
 
   // Designated Drive Master File State
   const [designatedFileId, setDesignatedFileIdState] = useState<string>(() => getDesignatedDriveFileId());
+  const [designatedFileName, setDesignatedFileNameState] = useState<string>(() => getDesignatedDriveFileName());
   const [isAutoSync, setIsAutoSync] = useState<boolean>(() => isDriveAutoSyncEnabled());
   const [isEditingFileId, setIsEditingFileId] = useState<boolean>(false);
   const [fileIdInput, setFileIdInput] = useState<string>(() => getDesignatedDriveFileId());
   const [driveSyncState, setDriveSyncState] = useState<DriveSyncStatus>(() => getDriveSyncStatus());
   const [sheetUrlInput, setSheetUrlInput] = useState<string>(() => getGoogleSheetUrl());
 
-  // Confirmation dialog state for destructive/mutating operations
+  // Confirmation dialog states for destructive/mutating operations (Workspace Integration Policy)
   const [confirmModalItem, setConfirmModalItem] = useState<DriveBackupItem | null>(null);
+  const [pushConfirmTarget, setPushConfirmTarget] = useState<{
+    fileId: string;
+    fileName: string;
+    mode: 'designated' | 'overwrite_existing';
+  } | null>(null);
+  const [pullConfirmOpen, setPullConfirmOpen] = useState<boolean>(false);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<DriveBackupItem | null>(null);
 
   useEffect(() => {
-    const token = getGoogleAccessToken();
-    if (token) {
-      setIsConnected(true);
-      const user = getGoogleDriveUser();
-      if (user?.email) setGoogleUserEmail(user.email);
-      fetchBackups();
-    }
+    const syncAuthState = () => {
+      const token = getGoogleAccessToken();
+      if (token) {
+        setIsConnected(true);
+        const user = getGoogleDriveUser();
+        if (user?.email) setGoogleUserEmail(user.email);
+        fetchBackups();
+      } else {
+        setIsConnected(false);
+        setGoogleUserEmail('');
+      }
+    };
+
+    syncAuthState();
 
     // Subscribe to drive sync status
     const unsubscribe = onDriveSyncStatusChange((st) => {
       setDriveSyncState(st);
       if (st.fileId) setDesignatedFileIdState(st.fileId);
+      if (st.fileName) setDesignatedFileNameState(st.fileName);
     });
+
+    const handleAuthChanged = () => syncAuthState();
+    window.addEventListener('vaharai_drive_auth_changed', handleAuthChanged);
 
     // Check central server status
     getCentralDatabaseStatus().then((status) => {
       if (status) setServerDbStatus(status);
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      window.removeEventListener('vaharai_drive_auth_changed', handleAuthChanged);
+    };
   }, []);
 
   const handleForceSyncServer = async () => {
@@ -243,14 +267,19 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     }
   };
 
-  const handleDeleteBackup = async (item: DriveBackupItem) => {
-    if (!window.confirm(lang === 'ta' ? 'இந்த காப்புப்பிரதியை கூகிள் டிரைவிலிருந்து நிச்சயமாக நீக்க வேண்டுமா?' : `Delete ${item.name} from Google Drive?`)) {
-      return;
-    }
+  const handleDeleteBackupConfirm = async () => {
+    if (!deleteConfirmItem) return;
     setIsLoading(true);
+    setErrorMessage('');
     try {
-      await deleteDriveBackup(item.id);
-      onAuditLog('DRIVE_DELETE', `Deleted Google Drive backup file: ${item.name}`);
+      await deleteDriveBackup(deleteConfirmItem.id);
+      onAuditLog('DRIVE_DELETE', `Deleted Google Drive backup file: ${deleteConfirmItem.name}`);
+      setStatusMessage(
+        lang === 'ta'
+          ? `🗑️ "${deleteConfirmItem.name}" கோப்பு கூகிள் டிரைவிலிருந்து நீக்கப்பட்டது.`
+          : `Deleted "${deleteConfirmItem.name}" from Google Drive.`
+      );
+      setDeleteConfirmItem(null);
       await fetchBackups();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to delete file from Google Drive');
@@ -284,7 +313,11 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     }
   };
 
-  const handleSaveToDesignatedFile = async () => {
+  const handleRequestPushToDrive = (
+    targetFileId: string = designatedFileId,
+    targetFileName: string = designatedFileName,
+    mode: 'designated' | 'overwrite_existing' = 'designated'
+  ) => {
     if (!isConnected) {
       setErrorMessage(
         lang === 'ta'
@@ -293,17 +326,30 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
       );
       return;
     }
+    setPushConfirmTarget({ fileId: targetFileId, fileName: targetFileName, mode });
+  };
+
+  const handleConfirmPushToDrive = async () => {
+    if (!pushConfirmTarget) return;
+    const { fileId: targetFileId, mode } = pushConfirmTarget;
     setIsLoading(true);
     setErrorMessage('');
     try {
       const snapshot = createDatabaseSnapshot();
-      const res = await saveToDesignatedDriveFile(snapshot, designatedFileId);
+      const res = await saveToDesignatedDriveFile(snapshot, targetFileId);
+      if (mode === 'overwrite_existing') {
+        setDesignatedDriveFileId(res.fileId, res.fileName);
+        setDesignatedFileIdState(res.fileId);
+        setDesignatedFileNameState(res.fileName);
+        setFileIdInput(res.fileId);
+      }
       setStatusMessage(
         lang === 'ta'
-          ? `✅ குறிக்கப்பட்ட டிரைவ் கோப்பில் (${res.fileId}) அனைத்து தகவல்களும் (${snapshot.beneficiaries?.length || 0} பிரஜைகள், ${snapshot.tokens?.length || 0} டோக்கன்கள்) வெற்றிகரமாக சேமிக்கப்பட்டன!`
-          : `✅ Successfully saved to designated Drive file (${res.fileId}) with ${snapshot.beneficiaries?.length || 0} citizens!`
+          ? `✅ குறிக்கப்பட்ட டிரைவ் கோப்பில் (${res.fileName} · ${res.fileId}) அனைத்து தகவல்களும் (${snapshot.beneficiaries?.length || 0} பிரஜைகள், ${snapshot.households?.length || 0} குடும்ப அலகுகள், ${snapshot.divisions?.length || 0} பிரிவுகள்) வெற்றிகரமாக சேமிக்கப்பட்டன!`
+          : `✅ Successfully saved to Google Drive file (${res.fileName} · ${res.fileId}) with ${snapshot.beneficiaries?.length || 0} citizens!`
       );
-      onAuditLog('DRIVE_MASTER_SYNC', `Saved master database directly to Google Drive file: ${res.fileId}`);
+      onAuditLog('DRIVE_MASTER_SYNC', `Saved master database directly to Google Drive file: ${res.fileName} (${res.fileId})`);
+      setPushConfirmTarget(null);
       await fetchBackups();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save to designated Google Drive file');
@@ -312,26 +358,40 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     }
   };
 
-  const handlePullFromDesignatedFile = async () => {
-    if (!window.confirm(lang === 'ta' ? 'குறிக்கப்பட்ட கூகிள் டிரைவ் கோப்பிலிருந்து தரவுகளைப் பெற்று தற்போதைய தகவல்களைப் புதுப்பிக்க விரும்புகிறீர்களா?' : 'Pull latest data from the designated Google Drive file and update local state?')) {
-      return;
-    }
+  const handleConfirmPullFromDesignatedFile = async () => {
     setIsLoading(true);
     setErrorMessage('');
     try {
       const driveData = await fetchFromDesignatedDriveFile(designatedFileId);
-      if (!driveData || !driveData.beneficiaries) {
-        throw new Error(lang === 'ta' ? 'டிரைவ் கோப்பில் சரியான தரவுத்தள ஆவணம் காணப்படவில்லை.' : 'Designated Drive file does not contain a valid database snapshot.');
+      if (!driveData || (!Array.isArray(driveData.beneficiaries) && !Array.isArray(driveData.users) && !Array.isArray(driveData.divisions))) {
+        throw new Error(lang === 'ta' ? 'டிரைவ் கோப்பில் சரியான தரவுத்தள ஆவணம் காணப்படவில்லை (அல்லது கோப்பு காலியாக உள்ளது).' : 'Designated Drive file is empty or does not contain a valid database snapshot.');
       }
       restoreDatabaseFromSnapshot(driveData);
       onDatabaseReload();
-      setStatusMessage(lang === 'ta' ? `டிரைவ் கோப்பிலிருந்து ${driveData.beneficiaries?.length || 0} பிரஜைகள் மற்றும் தகவல்கள் வெற்றிகரமாகப் பெறப்பட்டன!` : `Loaded ${driveData.beneficiaries?.length || 0} citizens from designated Drive file!`);
+      setStatusMessage(
+        lang === 'ta'
+          ? `டிரைவ் கோப்பிலிருந்து ${driveData.beneficiaries?.length || 0} பிரஜைகள் மற்றும் தகவல்கள் வெற்றிகரமாகப் பெறப்பட்டன!`
+          : `Loaded ${driveData.beneficiaries?.length || 0} citizens from designated Drive file!`
+      );
       onAuditLog('DRIVE_MASTER_PULL', `Pulled master database from Google Drive file: ${designatedFileId}`);
+      setPullConfirmOpen(false);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to pull from designated Google Drive file');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSetAsDesignatedTarget = (item: DriveBackupItem) => {
+    const cleanId = setDesignatedDriveFileId(item.id, item.name);
+    setDesignatedFileIdState(cleanId);
+    setDesignatedFileNameState(item.name);
+    setFileIdInput(cleanId);
+    setStatusMessage(
+      lang === 'ta'
+        ? `🎯 "${item.name}" முதன்மை டிரைவ் கோப்பாக அமைக்கப்பட்டது! இனி "டிரைவ் கோப்பில் சேமிக்கவும்" அல்லது Auto-Sync இதன் உள்ளடக்கத்தைப் புதுப்பிக்கும்.`
+        : `🎯 Set "${item.name}" as your primary target Drive JSON file.`
+    );
   };
 
   const handleUpdateDesignatedFileId = () => {
@@ -537,9 +597,12 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
             <div className="space-y-1">
               <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
                 <span>📁</span>
-                <span>{lang === 'ta' ? 'இணைக்கப்பட்ட டிரைவ் கோப்பு அடையாள எண் (File ID):' : 'Designated Drive File ID:'}</span>
+                <span>{lang === 'ta' ? 'இணைக்கப்பட்ட டிரைவ் கோப்பு (Target File):' : 'Designated Drive File:'}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-1 bg-emerald-100 text-emerald-950 border border-emerald-300 rounded text-xs font-bold">
+                  {designatedFileName}
+                </span>
                 <code className="px-2.5 py-1 bg-white border border-slate-300 rounded font-mono text-xs font-bold text-emerald-900 select-all">
                   {designatedFileId}
                 </code>
@@ -630,7 +693,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
           <button
             type="button"
-            onClick={handleSaveToDesignatedFile}
+            onClick={() => handleRequestPushToDrive(designatedFileId, designatedFileName, 'designated')}
             disabled={isLoading}
             className="py-2.5 px-3 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
           >
@@ -644,7 +707,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
 
           <button
             type="button"
-            onClick={handlePullFromDesignatedFile}
+            onClick={() => setPullConfirmOpen(true)}
             disabled={isLoading}
             className="py-2.5 px-3 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
           >
@@ -924,8 +987,8 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
 
               <p className="text-amber-900/90 leading-relaxed text-[11px]">
                 {lang === 'ta'
-                  ? 'கூகிளின் பாதுகாப்பு விதிகளின்படி, இந்த செயலி இயங்கும் இணைய முகவரியை (Domain) உங்களது Firebase திட்டத்தில் (planar-grid-s3kqt) "Authorized Domains" பட்டியலில் ஒரு முறை சேர்க்க வேண்டும்.'
-                  : 'Google Firebase security requires the domain hosting this applet to be explicitly added to the "Authorized Domains" whitelist in your Firebase project (planar-grid-s3kqt).'}
+                  ? `கூகிளின் பாதுகாப்பு விதிகளின்படி, இந்த செயலி இயங்கும் இணைய முகவரியை (Domain) உங்களது Firebase திட்டத்தில் (${firebaseConfig.projectId}) "Authorized Domains" பட்டியலில் ஒரு முறை சேர்க்க வேண்டும்.`
+                  : `Google Firebase security requires the domain hosting this applet to be explicitly added to the "Authorized Domains" whitelist in your Firebase project (${firebaseConfig.projectId}).`}
               </p>
 
               <div className="bg-white border border-amber-200 rounded-lg p-3 space-y-2">
@@ -1008,13 +1071,13 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
                   </li>
                   <li className="pl-4">
                     <a
-                      href="https://console.firebase.google.com/project/planar-grid-s3kqt/authentication/settings"
+                      href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded font-semibold text-[11px] my-1"
                     >
                       <span>🔗</span>
-                      <span>Firebase Auth Settings (planar-grid-s3kqt)</span>
+                      <span>Firebase Auth Settings ({firebaseConfig.projectId})</span>
                     </a>
                   </li>
                   <li>
@@ -1153,38 +1216,70 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
             </div>
           ) : (
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
-              {driveBackups.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 hover:bg-slate-50 flex items-center justify-between gap-4 text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">📄</span>
-                    <div>
-                      <div className="font-mono font-bold text-slate-900">{item.name}</div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                        {new Date(item.createdTime).toLocaleString()} · {item.size}
+              {driveBackups.map((item) => {
+                const isActiveTarget = item.id === designatedFileId;
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3.5 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                      isActiveTarget ? 'bg-emerald-50/60' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-lg shrink-0">📄</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-slate-900 break-all">{item.name}</span>
+                          {isActiveTarget && (
+                            <span className="px-2 py-0.5 bg-emerald-700 text-white rounded-full text-[10px] font-bold">
+                              🎯 {lang === 'ta' ? 'முதன்மை இலக்கு' : 'Active Target'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                          {new Date(item.createdTime).toLocaleString()} · {item.size} · ID: {item.id}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setConfirmModalItem(item)}
-                      className="px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded text-xs font-semibold transition-colors"
-                    >
-                      ↩️ {t.restoreFromDrive}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteBackup(item)}
-                      className="p-1 text-slate-400 hover:text-red-600 transition-colors"
-                      title="Delete from Drive"
-                    >
-                      🗑️
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                      {!isActiveTarget && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetAsDesignatedTarget(item)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded text-xs font-semibold transition-colors"
+                          title={lang === 'ta' ? 'இக்கோப்பை முதன்மை இலக்காக அமைக்க' : 'Set as Active Target File'}
+                        >
+                          🎯 {lang === 'ta' ? 'இலக்காக அமை' : 'Set Target'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRequestPushToDrive(item.id, item.name, 'overwrite_existing')}
+                        className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded text-xs font-semibold transition-colors"
+                        title={lang === 'ta' ? 'தற்போதைய தரவுத்தளத்தை இந்தக் கோப்பில் சேமிக்க' : 'Overwrite this Drive file with current local DB'}
+                      >
+                        📤 {lang === 'ta' ? 'இதில் புதுப்பி' : 'Overwrite with DB'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmModalItem(item)}
+                        className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded text-xs font-semibold transition-colors"
+                      >
+                        ↩️ {t.restoreFromDrive}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmItem(item)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"
+                        title={lang === 'ta' ? 'டிரைவிலிருந்து நீக்கு' : 'Delete from Drive'}
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1252,9 +1347,149 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
               <button
                 type="button"
                 onClick={handleRestoreBackup}
+                disabled={isLoading}
                 className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-xs"
               >
                 {lang === 'ta' ? 'மீட்டெடுக்கவும் (Confirm Restore)' : 'Confirm Restore'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Writing / Overwriting a Google Drive File */}
+      {pushConfirmTarget && (() => {
+        const snap = createDatabaseSnapshot();
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 border border-slate-200">
+              <div className="flex items-center gap-2 text-emerald-700 pb-2 border-b border-slate-100">
+                <span className="text-xl">📤</span>
+                <h3 className="text-sm font-bold text-slate-900">
+                  {lang === 'ta'
+                    ? 'Google Drive கோப்பில் தரவைப் புதுப்பிக்க உறுதிப்படுத்தவும்'
+                    : 'Confirm Overwrite Google Drive File'}
+                </h3>
+              </div>
+
+              <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+                {lang === 'ta'
+                  ? 'கீழே உள்ள Google Drive கோப்பின் தற்போதைய உள்ளடக்கம் மாற்றப்பட்டு, உங்கள் கணினியில் உள்ள முழுத் தரவுத்தளமும் அதில் சேமிக்கப்படும்:'
+                  : 'This action will overwrite the contents of the selected Google Drive file with your current database snapshot:'}
+              </p>
+
+              <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs space-y-1">
+                <div className="font-mono font-bold text-emerald-950 break-all">
+                  📄 {pushConfirmTarget.fileName}
+                </div>
+                <div className="font-mono text-[11px] text-emerald-800 break-all">
+                  ID: {pushConfirmTarget.fileId}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] bg-slate-50 p-2.5 rounded-lg border border-slate-200 font-mono">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">{lang === 'ta' ? 'பிரஜைகள்' : 'Citizens'}</span>
+                  <strong className="text-slate-900 text-sm">{snap.beneficiaries?.length || 0}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">{lang === 'ta' ? 'குடும்பங்கள்' : 'Households'}</span>
+                  <strong className="text-slate-900 text-sm">{snap.households?.length || 0}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">{lang === 'ta' ? 'நிவாரணம் / காணி' : 'Aid / Land'}</span>
+                  <strong className="text-slate-900 text-sm">{(snap.assistance?.length || 0) + (snap.landRecords?.length || 0)}</strong>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 mt-5">
+                <button
+                  type="button"
+                  onClick={() => setPushConfirmTarget(null)}
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmPushToDrive}
+                  disabled={isLoading}
+                  className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold shadow-xs"
+                >
+                  {lang === 'ta' ? 'ஆம், டிரைவில் சேமிக்கவும் (Confirm Push)' : 'Confirm Push to Drive'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Confirmation Dialog for Pulling from Designated Drive File */}
+      {pullConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center gap-2 text-indigo-700 pb-2 border-b border-slate-100">
+              <span className="text-xl">📥</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'டிரைவிலிருந்து தரவுகளைப் பெற உறுதிப்படுத்தவும்' : 'Confirm Pull from Google Drive'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {lang === 'ta'
+                ? `"${designatedFileName}" கோப்பிலிருந்து தரவுகளைப் பெற்று உள்ளூர் தரவுத்தளத்தைப் புதுப்பிக்க விரும்புகிறீர்களா?`
+                : `Pull latest snapshot from "${designatedFileName}" and replace local browser state?`}
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setPullConfirmOpen(false)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPullFromDesignatedFile}
+                disabled={isLoading}
+                className="px-4 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'ஆம், தரவைப் பெறுக' : 'Confirm Pull'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Deleting a Drive File */}
+      {deleteConfirmItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center gap-2 text-red-700 pb-2 border-b border-slate-100">
+              <span className="text-xl">🗑️</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'Google Drive கோப்பை நீக்க உறுதிப்படுத்தவும்' : 'Confirm Delete Drive File'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {lang === 'ta'
+                ? `"${deleteConfirmItem.name}" கோப்பை உங்கள் Google Drive கணக்கிலிருந்து நிச்சயமாக நீக்க வேண்டுமா?`
+                : `Are you sure you want to permanently delete "${deleteConfirmItem.name}" from Google Drive?`}
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmItem(null)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteBackupConfirm}
+                disabled={isLoading}
+                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'ஆம், நீக்குக (Delete)' : 'Confirm Delete'}
               </button>
             </div>
           </div>

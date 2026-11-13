@@ -30,6 +30,7 @@ export interface DSDivision {
   defaultPassword?: string;
   headquartersTa?: string;
   headquartersEn?: string;
+  logoUrl?: string; // Custom uploaded logo (data URL or image URL) managed by Super Admin / District Admin
 }
 
 export const BATTICALOA_DS_DIVISIONS: DSDivision[] = [

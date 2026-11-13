@@ -16,20 +16,27 @@ import { User } from '../types';
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 
-const DRIVE_TOKEN_KEY = 'vaharai_ds_drive_token';
+const LEGACY_DRIVE_TOKEN_KEY = 'vaharai_ds_drive_token';
 const DRIVE_USER_KEY = 'vaharai_ds_drive_user';
 
-// In-memory + session cached token
+// Strictly in-memory OAuth access token cache (never stored in localStorage/sessionStorage)
 let cachedAccessToken: string | null = null;
+let cachedTokenExpiresAt: number = 0;
+let authSource: 'firebase' | 'gis' | 'manual' | null = null;
 let isSigningIn = false;
 
-// Initialize cached token from storage on startup
+const emitAuthChanged = (action: string = 'DRIVE_AUTH_CHANGED') => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('vaharai_drive_auth_changed', { detail: { action } }));
+    window.dispatchEvent(new CustomEvent('vaharai_db_updated', { detail: { action } }));
+  }
+};
+
+// Remove any legacy persisted OAuth token from storage & handle redirect sign-in on startup
 try {
   if (typeof window !== 'undefined') {
-    const savedToken = sessionStorage.getItem(DRIVE_TOKEN_KEY) || localStorage.getItem(DRIVE_TOKEN_KEY);
-    if (savedToken) {
-      cachedAccessToken = savedToken;
-    }
+    localStorage.removeItem(LEGACY_DRIVE_TOKEN_KEY);
+    sessionStorage.removeItem(LEGACY_DRIVE_TOKEN_KEY);
 
     // Check if returning from a signInWithRedirect operation
     getRedirectResult(auth)
@@ -37,13 +44,14 @@ try {
         if (result) {
           const credential = GoogleAuthProvider.credentialFromResult(result);
           if (credential?.accessToken) {
-            setGoogleAccessToken(credential.accessToken);
+            authSource = 'firebase';
+            setGoogleAccessToken(credential.accessToken, 3500);
             const userInfo = {
               email: result.user.email,
               displayName: result.user.displayName,
             };
             setGoogleDriveUser(userInfo);
-            window.dispatchEvent(new CustomEvent('vaharai_db_updated', { detail: { action: 'DRIVE_CONNECTED' } }));
+            emitAuthChanged('DRIVE_CONNECTED');
           }
         }
       })
@@ -56,6 +64,7 @@ try {
 }
 
 export const getGoogleDriveUser = (): { email?: string; displayName?: string } | null => {
+  if (!isGoogleDriveAuthenticated()) return null;
   try {
     if (typeof window !== 'undefined') {
       const raw = localStorage.getItem(DRIVE_USER_KEY);
@@ -101,6 +110,13 @@ export const initFirebaseAuth = (
         if (onFail) onFail();
       }
     } else {
+      if (authSource === 'firebase') {
+        cachedAccessToken = null;
+        cachedTokenExpiresAt = 0;
+        authSource = null;
+        setGoogleDriveUser(null);
+        emitAuthChanged('DRIVE_SIGNED_OUT');
+      }
       if (!getGoogleAccessToken()) {
         if (onFail) onFail();
       }
@@ -112,6 +128,17 @@ export const signInWithGoogleDriveRedirect = async () => {
   await signInWithRedirect(auth, provider);
 };
 
+const waitForGisLoaded = async (timeoutMs: number = 2500): Promise<boolean> => {
+  if (typeof window === 'undefined') return false;
+  if ((window as any).google?.accounts?.oauth2) return true;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 120));
+    if ((window as any).google?.accounts?.oauth2) return true;
+  }
+  return false;
+};
+
 export const signInWithGoogleDrive = async (): Promise<{ user: { email?: string | null; displayName?: string | null }; accessToken: string }> => {
   isSigningIn = true;
   try {
@@ -121,23 +148,37 @@ export const signInWithGoogleDrive = async (): Promise<{ user: { email?: string 
     if (!credential?.accessToken) {
       throw new Error('Could not obtain Google Drive access token from credential');
     }
-    setGoogleAccessToken(credential.accessToken);
+    authSource = 'firebase';
+    setGoogleAccessToken(credential.accessToken, 3500);
     const userInfo = {
       email: result.user.email,
       displayName: result.user.displayName,
     };
     setGoogleDriveUser(userInfo);
+    emitAuthChanged('DRIVE_CONNECTED');
     return { user: userInfo, accessToken: credential.accessToken };
   } catch (err: any) {
     console.warn('Firebase sign-in error, testing GIS fallback:', err);
 
-    // If unauthorized-domain error or popup blocked, try Google Identity Services (GIS) token client if loaded
-    if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2) {
-      try {
-        const gisResult = await requestAccessTokenViaGis();
-        return gisResult;
-      } catch (gisErr: any) {
-        console.error('GIS fallback also failed:', gisErr);
+    // Do not try GIS if user explicitly closed popup unless unauthorized-domain
+    const shouldTryGis =
+      err?.code === 'auth/unauthorized-domain' ||
+      err?.code === 'auth/operation-not-supported-in-this-environment' ||
+      err?.code === 'auth/internal-error' ||
+      err?.code === 'auth/popup-blocked';
+
+    if (shouldTryGis || (await waitForGisLoaded(1500))) {
+      const gisReady = await waitForGisLoaded(2000);
+      if (gisReady) {
+        try {
+          const gisResult = await requestAccessTokenViaGis();
+          return gisResult;
+        } catch (gisErr: any) {
+          console.error('GIS fallback also failed:', gisErr);
+          if (err?.code === 'auth/unauthorized-domain') {
+            throw gisErr;
+          }
+        }
       }
     }
 
@@ -178,7 +219,9 @@ const requestAccessTokenViaGis = async (): Promise<{ user: { email: string; disp
             return;
           }
           if (resp.access_token) {
-            setGoogleAccessToken(resp.access_token);
+            authSource = 'gis';
+            const expiresIn = Number(resp.expires_in) || 3500;
+            setGoogleAccessToken(resp.access_token, expiresIn);
             let email = 'Google Account';
             let displayName = 'Drive User';
             try {
@@ -195,6 +238,7 @@ const requestAccessTokenViaGis = async (): Promise<{ user: { email: string; disp
             }
             const userInfo = { email, displayName };
             setGoogleDriveUser(userInfo);
+            emitAuthChanged('DRIVE_CONNECTED');
             resolve({
               user: userInfo,
               accessToken: resp.access_token,
@@ -211,38 +255,45 @@ const requestAccessTokenViaGis = async (): Promise<{ user: { email: string; disp
   });
 };
 
-export const setGoogleAccessToken = (token: string | null) => {
-  cachedAccessToken = token;
+export const setGoogleAccessToken = (token: string | null, expiresInSeconds: number = 3500) => {
+  cachedAccessToken = token ? token.trim() : null;
+  cachedTokenExpiresAt = cachedAccessToken ? Date.now() + expiresInSeconds * 1000 : 0;
+  if (cachedAccessToken && !authSource) {
+    authSource = 'manual';
+  }
+  if (!cachedAccessToken) {
+    authSource = null;
+    setGoogleDriveUser(null);
+  }
   try {
     if (typeof window !== 'undefined') {
-      if (token) {
-        sessionStorage.setItem(DRIVE_TOKEN_KEY, token);
-        localStorage.setItem(DRIVE_TOKEN_KEY, token);
-      } else {
-        sessionStorage.removeItem(DRIVE_TOKEN_KEY);
-        localStorage.removeItem(DRIVE_TOKEN_KEY);
-        localStorage.removeItem(DRIVE_USER_KEY);
-      }
+      localStorage.removeItem(LEGACY_DRIVE_TOKEN_KEY);
+      sessionStorage.removeItem(LEGACY_DRIVE_TOKEN_KEY);
     }
   } catch {
     // ignore
   }
+  emitAuthChanged(cachedAccessToken ? 'DRIVE_CONNECTED' : 'DRIVE_DISCONNECTED');
+};
+
+export const invalidateGoogleAccessToken = () => {
+  cachedAccessToken = null;
+  cachedTokenExpiresAt = 0;
+  authSource = null;
+  setGoogleDriveUser(null);
+  emitAuthChanged('DRIVE_TOKEN_EXPIRED');
 };
 
 export const getGoogleAccessToken = (): string | null => {
-  if (cachedAccessToken) return cachedAccessToken;
-  try {
-    if (typeof window !== 'undefined') {
-      const savedToken = sessionStorage.getItem(DRIVE_TOKEN_KEY) || localStorage.getItem(DRIVE_TOKEN_KEY);
-      if (savedToken) {
-        cachedAccessToken = savedToken;
-        return savedToken;
-      }
-    }
-  } catch {
-    // ignore
+  if (!cachedAccessToken) return null;
+  if (cachedTokenExpiresAt > 0 && Date.now() > cachedTokenExpiresAt) {
+    cachedAccessToken = null;
+    cachedTokenExpiresAt = 0;
+    authSource = null;
+    setGoogleDriveUser(null);
+    return null;
   }
-  return null;
+  return cachedAccessToken;
 };
 
 export const isGoogleDriveAuthenticated = (): boolean => {

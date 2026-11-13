@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
-import { User, Role, GNDivision, BATTICALOA_DS_DIVISIONS, DSDivision } from '../types';
+import { User, Role, GNDivision, BATTICALOA_DS_DIVISIONS } from '../types';
 import { Language, translations } from '../translations/i18n';
+import { getDsDivisionById } from '../services/storage';
+import { VaharaiLogo } from './VaharaiLogo';
+import { LogoSettingsModal } from './LogoSettingsModal';
 import {
   Users,
   UserPlus,
@@ -15,6 +18,7 @@ import {
   Search,
   Layers,
   Filter,
+  ImagePlus,
 } from 'lucide-react';
 
 interface StaffManagementViewProps {
@@ -42,6 +46,7 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
 
   // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showLogoModal, setShowLogoModal] = useState(false);
   const [editingPasswordUser, setEditingPasswordUser] = useState<User | null>(null);
   const [newPasswordVal, setNewPasswordVal] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -75,7 +80,7 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
     ? (currentUser.dsDivisionId || 'DS_VAHARAI')
     : (selectedDsFilter === 'ALL' ? 'DS_VAHARAI' : selectedDsFilter);
 
-  const currentDs = BATTICALOA_DS_DIVISIONS.find((d) => d.id === currentDsId) || BATTICALOA_DS_DIVISIONS[6];
+  const currentDs = getDsDivisionById(currentDsId) || BATTICALOA_DS_DIVISIONS.find((d) => d.id === currentDsId) || BATTICALOA_DS_DIVISIONS[6];
 
   // Strict Tenant Isolation:
   // Super Admin ONLY sees staff belonging to their own DS division!
@@ -220,10 +225,10 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
       {/* Top Banner with Strict Tenant Identity */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
-              <Users className="w-5 h-5" />
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="p-1 bg-white rounded-full border border-emerald-200 shadow-xs shrink-0">
+              <VaharaiLogo size={42} className="w-10 h-10" dsDivisionId={currentDsId} />
+            </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] bg-emerald-800 text-white px-2 py-0.5 rounded-full font-mono uppercase font-bold">
@@ -245,7 +250,7 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           {/* District Admin Switcher */}
           {isDistrictAdmin && (
             <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
@@ -264,6 +269,16 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
               </select>
             </div>
           )}
+
+          {/* Change Secretariat Logo Button */}
+          <button
+            onClick={() => setShowLogoModal(true)}
+            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+            title={lang === 'ta' ? 'பிரதேச செயலக லோகோவை மாற்றுக' : 'Change Secretariat Logo'}
+          >
+            <ImagePlus className="w-4 h-4 text-emerald-800" />
+            <span>{lang === 'ta' ? 'செயலக லோகோ மாற்று' : 'Change Logo'}</span>
+          </button>
 
           <button
             onClick={handleOpenAdd}
@@ -614,6 +629,32 @@ export const StaffManagementView: React.FC<StaffManagementViewProps> = ({
           </div>
         </div>
       )}
+      {/* Secretariat Logo Settings Modal */}
+      <LogoSettingsModal
+        isOpen={showLogoModal}
+        onClose={() => setShowLogoModal(false)}
+        targetId={isDistrictAdmin && selectedDsFilter === 'ALL' ? 'DISTRICT_HQ' : currentDsId}
+        targetNameTa={
+          isDistrictAdmin && selectedDsFilter === 'ALL'
+            ? 'மட்டக்களப்பு மாவட்ட செயலகம்'
+            : `${currentDs.nameTa} பிரதேச செயலகம்`
+        }
+        targetNameEn={
+          isDistrictAdmin && selectedDsFilter === 'ALL'
+            ? 'Batticaloa District Secretariat'
+            : `${currentDs.nameEn} Divisional Secretariat`
+        }
+        lang={lang}
+        onAuditLog={onAuditLog}
+        onLogoUpdated={() => {
+          setSuccessMsg(
+            lang === 'ta'
+              ? 'செயலக லோகோ வெற்றிகரமாக புதுப்பிக்கப்பட்டது!'
+              : 'Secretariat logo updated successfully!'
+          );
+          setTimeout(() => setSuccessMsg(''), 4000);
+        }}
+      />
     </div>
   );
 };

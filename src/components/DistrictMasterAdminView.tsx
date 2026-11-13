@@ -19,6 +19,7 @@ import {
 } from '../services/storage';
 import { PrintableFilteredReportModal } from './PrintableFilteredReportModal';
 import { CitizenProfileModal } from './CitizenProfileModal';
+import { LogoSettingsModal } from './LogoSettingsModal';
 import {
   ShieldCheck,
   Building2,
@@ -53,6 +54,7 @@ import {
   Baby,
   Accessibility,
   ClipboardList,
+  ImagePlus,
 } from 'lucide-react';
 
 interface DistrictMasterAdminViewProps {
@@ -122,9 +124,10 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
   const [oversightWelfareFilter, setOversightWelfareFilter] = useState<string>('ALL');
   const [oversightSearch, setOversightSearch] = useState<string>('');
 
-  // Modals for Citizen Oversight
+  // Modals for Citizen Oversight & Logo Management
   const [selectedCitizenForModal, setSelectedCitizenForModal] = useState<Beneficiary | null>(null);
   const [showPrintReportModal, setShowPrintReportModal] = useState(false);
+  const [logoModalTarget, setLogoModalTarget] = useState<{ id: string; nameTa: string; nameEn: string } | null>(null);
 
   // Toast
   const [toastMessage, setToastMessage] = useState('');
@@ -474,7 +477,7 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-md p-2 border border-amber-400/40 flex items-center justify-center shrink-0 shadow-inner">
-              <VaharaiLogo size={52} className="w-13 h-13" />
+              <VaharaiLogo size={52} className="w-13 h-13" dsDivisionId="DISTRICT_HQ" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -505,6 +508,20 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
                 {currentUser.name}
               </div>
             </div>
+            <button
+              onClick={() =>
+                setLogoModalTarget({
+                  id: 'DISTRICT_HQ',
+                  nameTa: 'மட்டக்களப்பு மாவட்ட செயலகம்',
+                  nameEn: 'Batticaloa District Secretariat',
+                })
+              }
+              className="px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+              title={lang === 'ta' ? 'மாவட்ட செயலக லோகோவை மாற்றுக' : 'Change District Secretariat Logo'}
+            >
+              <ImagePlus className="w-3.5 h-3.5" />
+              <span>{lang === 'ta' ? 'மாவட்ட லோகோ' : 'District Logo'}</span>
+            </button>
           </div>
         </div>
 
@@ -725,11 +742,16 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
                     }`}
                   >
                     <div>
-                      {/* Header: Code & Status */}
+                      {/* Header: Code, Logo & Status */}
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                          {ds.code}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <div className="p-0.5 bg-white rounded-full border border-slate-200 shadow-2xs shrink-0">
+                            <VaharaiLogo size={26} className="w-6.5 h-6.5" dsDivisionId={ds.id} />
+                          </div>
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                            {ds.code}
+                          </span>
+                        </div>
                         {isActive ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
@@ -802,19 +824,36 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
                     </div>
 
                     {/* Footer Action */}
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => toggleSuperAdminStatus(ds)}
-                        className={`text-[11px] font-bold px-2 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer ${
-                          isActive
-                            ? 'text-amber-800 hover:bg-amber-100 bg-amber-50 border border-amber-200'
-                            : 'text-emerald-800 hover:bg-emerald-100 bg-emerald-50 border border-emerald-200'
-                        }`}
-                        title={isActive ? 'Block Super Admin' : 'Activate Super Admin'}
-                      >
-                        {isActive ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                        <span>{isActive ? (lang === 'ta' ? 'முடக்கு' : 'Block') : (lang === 'ta' ? 'செயற்படுத்து' : 'Activate')}</span>
-                      </button>
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => toggleSuperAdminStatus(ds)}
+                          className={`text-[11px] font-bold px-2 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer ${
+                            isActive
+                              ? 'text-amber-800 hover:bg-amber-100 bg-amber-50 border border-amber-200'
+                              : 'text-emerald-800 hover:bg-emerald-100 bg-emerald-50 border border-emerald-200'
+                          }`}
+                          title={isActive ? 'Block Super Admin' : 'Activate Super Admin'}
+                        >
+                          {isActive ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                          <span>{isActive ? (lang === 'ta' ? 'முடக்கு' : 'Block') : (lang === 'ta' ? 'செயற்படுத்து' : 'Activate')}</span>
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            setLogoModalTarget({
+                              id: ds.id,
+                              nameTa: ds.nameTa,
+                              nameEn: ds.nameEn,
+                            })
+                          }
+                          className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
+                          title={lang === 'ta' ? 'பிரதேச செயலக லோகோ மாற்றுக' : 'Change DS Logo'}
+                        >
+                          <ImagePlus className="w-3 h-3" />
+                          <span>{lang === 'ta' ? 'லோகோ' : 'Logo'}</span>
+                        </button>
+                      </div>
 
                       <button
                         onClick={() => handleSelectDivision(ds.id)}
@@ -1297,15 +1336,22 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
                         </td>
 
                         <td className="py-3 px-4">
-                          <div className="font-bold text-slate-900 text-sm">
-                            {lang === 'ta' ? ds.nameTa : ds.nameEn}
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                            <span>{lang === 'ta' ? ds.nameEn : ds.nameTa}</span>
-                            <span>·</span>
-                            <span className="text-slate-600 font-semibold">{ds.headquartersTa || ds.headquartersEn || ds.nameEn}</span>
-                            <span>·</span>
-                            <span className="text-emerald-700 font-semibold">{dsStaffCount} {lang === 'ta' ? 'அலுவலர்கள்' : 'Staff'}</span>
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-0.5 bg-white rounded-full border border-slate-200 shrink-0">
+                              <VaharaiLogo size={28} className="w-7 h-7" dsDivisionId={ds.id} />
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900 text-sm">
+                                {lang === 'ta' ? ds.nameTa : ds.nameEn}
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                <span>{lang === 'ta' ? ds.nameEn : ds.nameTa}</span>
+                                <span>·</span>
+                                <span className="text-slate-600 font-semibold">{ds.headquartersTa || ds.headquartersEn || ds.nameEn}</span>
+                                <span>·</span>
+                                <span className="text-emerald-700 font-semibold">{dsStaffCount} {lang === 'ta' ? 'அலுவலர்கள்' : 'Staff'}</span>
+                              </div>
+                            </div>
                           </div>
                         </td>
 
@@ -1397,6 +1443,21 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
                                 <KeyRound className="w-3.5 h-3.5" />
                               </button>
                             )}
+
+                            {/* Logo Edit Button */}
+                            <button
+                              onClick={() =>
+                                setLogoModalTarget({
+                                  id: ds.id,
+                                  nameTa: ds.nameTa,
+                                  nameEn: ds.nameEn,
+                                })
+                              }
+                              className="p-1.5 hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                              title={lang === 'ta' ? 'லோகோ மாற்றுக' : 'Change Logo'}
+                            >
+                              <ImagePlus className="w-3.5 h-3.5" />
+                            </button>
 
                             {/* Inspect / Jump to Division Button */}
                             <button
@@ -2015,6 +2076,27 @@ export const DistrictMasterAdminView: React.FC<DistrictMasterAdminViewProps> = (
           onClose={() => setShowPrintReportModal(false)}
           organizationTitleTa="மட்டக்களப்பு மாவட்ட செயலகம் · பிரஜைகள் மேற்பார்வை அறிக்கை"
           organizationTitleEn="Batticaloa District Secretariat · Citizens Oversight Report"
+        />
+      )}
+
+      {/* MODAL 5: LOGO MANAGEMENT MODAL */}
+      {logoModalTarget && (
+        <LogoSettingsModal
+          isOpen={true}
+          onClose={() => setLogoModalTarget(null)}
+          targetId={logoModalTarget.id}
+          targetNameTa={logoModalTarget.nameTa}
+          targetNameEn={logoModalTarget.nameEn}
+          lang={lang}
+          onAuditLog={onAuditLog}
+          onLogoUpdated={() => {
+            setDsList(loadDsDivisions());
+            showToast(
+              lang === 'ta'
+                ? `${logoModalTarget.nameTa} லோகோ வெற்றிகரமாக புதுப்பிக்கப்பட்டது!`
+                : `Logo updated for ${logoModalTarget.nameEn}!`
+            );
+          }}
         />
       )}
     </div>

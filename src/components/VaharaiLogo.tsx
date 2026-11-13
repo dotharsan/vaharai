@@ -1,11 +1,77 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { getDsLogo, getDistrictLogo } from '../services/storage';
 
 interface VaharaiLogoProps {
   className?: string;
   size?: number;
+  dsDivisionId?: string | null;
+  customLogoUrl?: string | null;
 }
 
-export const VaharaiLogo: React.FC<VaharaiLogoProps> = ({ className = 'w-10 h-10', size = 80 }) => {
+const resolveActiveLogo = (dsDivisionId?: string | null, customLogoUrl?: string | null): string | null => {
+  if (customLogoUrl !== undefined) {
+    return customLogoUrl && customLogoUrl.trim() ? customLogoUrl : null;
+  }
+  if (dsDivisionId !== undefined) {
+    return getDsLogo(dsDivisionId);
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const rawSession = sessionStorage.getItem('vaharai_ds_active_user');
+      if (rawSession) {
+        const user = JSON.parse(rawSession);
+        if (user?.role === 'DISTRICT_ADMIN') {
+          return getDistrictLogo();
+        }
+        if (user?.dsDivisionId) {
+          return getDsLogo(user.dsDivisionId);
+        }
+      }
+      return getDistrictLogo();
+    } catch {
+      return getDistrictLogo();
+    }
+  }
+  return null;
+};
+
+export const VaharaiLogo: React.FC<VaharaiLogoProps> = ({
+  className = 'w-10 h-10',
+  size = 80,
+  dsDivisionId,
+  customLogoUrl,
+}) => {
+  const [logoSrc, setLogoSrc] = useState<string | null>(() =>
+    resolveActiveLogo(dsDivisionId, customLogoUrl)
+  );
+
+  useEffect(() => {
+    setLogoSrc(resolveActiveLogo(dsDivisionId, customLogoUrl));
+
+    if (typeof window === 'undefined' || customLogoUrl !== undefined) return;
+    const refresh = () => {
+      setLogoSrc(resolveActiveLogo(dsDivisionId, customLogoUrl));
+    };
+    window.addEventListener('vaharai_db_updated', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('vaharai_db_updated', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [dsDivisionId, customLogoUrl]);
+
+  if (logoSrc) {
+    return (
+      <img
+        src={logoSrc}
+        alt="Secretariat Official Logo"
+        width={size}
+        height={size}
+        className={`${className} object-contain rounded-full`}
+      />
+    );
+  }
+
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

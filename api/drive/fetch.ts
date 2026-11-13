@@ -100,9 +100,14 @@ export default async function handler(req: any, res: any) {
 
         if (resp.ok) {
           const text = await resp.text();
-          // Check if response is JSON
+          const trimmed = text.trim();
+          // Skip HTML login/permission pages returned by Google Drive for private files
+          if (/^<(!doctype|html)/i.test(trimmed)) {
+            continue;
+          }
+          // Check if response is valid non-empty JSON snapshot
           try {
-            const data = JSON.parse(text);
+            const data = JSON.parse(trimmed);
             if (data && (Array.isArray(data.beneficiaries) || Array.isArray(data.users))) {
               return res.status(200).json({
                 success: true,
@@ -112,8 +117,9 @@ export default async function handler(req: any, res: any) {
               });
             }
           } catch {
-            // Content is not JSON, check if CSV
-            if (text.includes(',') || text.includes('\n')) {
+            // Ignore malformed placeholder content such as "{\n [\n ]\n}"
+            const looksLikeBrokenJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+            if (!looksLikeBrokenJson && (trimmed.includes(',') || trimmed.includes('\n'))) {
               return res.status(200).json({
                 success: true,
                 type: 'csv_text',

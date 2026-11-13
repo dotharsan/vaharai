@@ -692,5 +692,6 @@
   "landRecords": [],
   "households": [],
   "petitions": [],
-  "auditLogs": []
+  "auditLogs": [],
+  "lastServerSync": "2026-11-13T04:54:31.637Z"
 }

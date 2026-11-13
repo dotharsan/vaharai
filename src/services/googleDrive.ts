@@ -1,4 +1,4 @@
-import { getGoogleAccessToken, isGoogleDriveAuthenticated } from './auth';
+import { getGoogleAccessToken, invalidateGoogleAccessToken, isGoogleDriveAuthenticated } from './auth';
 import { DriveBackupItem } from '../types';
 import { parseBeneficiariesFromCsv } from './csv';
 
@@ -7,6 +7,7 @@ export const DEFAULT_DESIGNATED_FILE_URL = 'https://drive.google.com/file/d/1oED
 
 const STORAGE_KEYS = {
   DESIGNATED_FILE_ID: 'vaharai_ds_designated_drive_file_id',
+  DESIGNATED_FILE_NAME: 'vaharai_ds_designated_drive_file_name',
   GOOGLE_SHEET_URL: 'vaharai_ds_google_sheet_url',
   AUTO_SYNC_ENABLED: 'vaharai_ds_drive_auto_sync_enabled',
   LAST_DRIVE_SYNC: 'vaharai_ds_last_drive_sync_meta',
@@ -16,6 +17,8 @@ export interface DriveSyncStatus {
   state: 'idle' | 'syncing' | 'synced' | 'error';
   lastSyncedAt?: string;
   fileId?: string;
+  fileName?: string;
+  webViewLink?: string;
   sheetUrl?: string;
   message?: string;
 }
@@ -44,8 +47,12 @@ export const getDriveSyncStatus = (): DriveSyncStatus => {
 
 const notifyStatusChange = (status: Partial<DriveSyncStatus>) => {
   currentSyncStatus = { ...currentSyncStatus, ...status };
-  if (typeof window !== 'undefined' && status.lastSyncedAt) {
-    localStorage.setItem(STORAGE_KEYS.LAST_DRIVE_SYNC, JSON.stringify(currentSyncStatus));
+  if (typeof window !== 'undefined' && (status.lastSyncedAt || status.state === 'error' || status.fileId)) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.LAST_DRIVE_SYNC, JSON.stringify(currentSyncStatus));
+    } catch {
+      // ignore
+    }
   }
   statusListeners.forEach((listener) => {
     try {
@@ -70,16 +77,13 @@ export const onDriveSyncStatusChange = (listener: (status: DriveSyncStatus) => v
 export const extractDriveFileId = (input: string): string => {
   if (!input) return DEFAULT_DESIGNATED_FILE_ID;
   const trimmed = input.trim();
-  // Match https://drive.google.com/file/d/<FILE_ID>/...
   const matchFileD = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (matchFileD && matchFileD[1]) return matchFileD[1];
 
-  // Match id=<FILE_ID>
   const matchIdParam = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (matchIdParam && matchIdParam[1]) return matchIdParam[1];
 
-  // Raw file ID (contains alphanumeric, dashes, underscores)
-  if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) {
+  if (/^[a-zA-Z0-9_-]{15,}$/.test(trimmed)) {
     return trimmed;
   }
 
@@ -94,19 +98,34 @@ export const getDesignatedDriveFileId = (): string => {
   return DEFAULT_DESIGNATED_FILE_ID;
 };
 
-export const setDesignatedDriveFileId = (idOrUrl: string): string => {
+export const getDesignatedDriveFileName = (): string => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(STORAGE_KEYS.DESIGNATED_FILE_NAME);
+    if (saved) return saved;
+  }
+  return 'vaharai_ds_master_database.json';
+};
+
+export const setDesignatedDriveFileId = (idOrUrl: string, customName?: string): string => {
   const extracted = extractDriveFileId(idOrUrl);
   if (typeof window !== 'undefined') {
     localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_ID, extracted);
+    if (customName) {
+      localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_NAME, customName);
+    }
   }
-  notifyStatusChange({ fileId: extracted });
+  notifyStatusChange({ fileId: extracted, ...(customName ? { fileName: customName } : {}) });
   return extracted;
+};
+
+export const isCustomDesignatedFileSet = (): boolean => {
+  return getDesignatedDriveFileId() !== DEFAULT_DESIGNATED_FILE_ID;
 };
 
 export const isDriveAutoSyncEnabled = (): boolean => {
   if (typeof window !== 'undefined') {
     const val = localStorage.getItem(STORAGE_KEYS.AUTO_SYNC_ENABLED);
-    return val === null ? true : val === 'true'; // Enabled by default
+    return val === null ? true : val === 'true';
   }
   return true;
 };
@@ -137,9 +156,24 @@ export const setGoogleSheetUrl = (url: string): string => {
   return clean;
 };
 
+const safeParseDriveJsonText = (rawText: string): any | null => {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed || trimmed === '{}' || trimmed === '[]' || /^\{\s*\[\s*\]\s*\}$/.test(trimmed)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && (Array.isArray(parsed.beneficiaries) || Array.isArray(parsed.users) || Array.isArray(parsed.divisions))) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Fetch and parse data from Google Drive file or Google Sheet via Server Proxy
- * Bypasses CORS and loads shared files directly without requiring user sign-in!
  */
 export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any | null> => {
   const sheetUrl = getGoogleSheetUrl();
@@ -160,7 +194,6 @@ export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any |
         return result.data;
       }
 
-      // If CSV content received from Google Sheets
       if ((result.type === 'csv_sheet' || result.type === 'csv_text') && result.content) {
         const { items } = parseBeneficiariesFromCsv(result.content);
         if (items && items.length > 0) {
@@ -182,13 +215,59 @@ export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any |
 
 /**
  * Fetch and parse data from the designated Google Drive file or Google Sheet.
- * Automatically attempts server-side proxy first (CORS-free), then authenticated API.
+ * Automatically tries authenticated Drive API first if connected, then falls back to server proxy.
  */
 export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promise<any | null> => {
   const fileId = customFileId || getDesignatedDriveFileId();
-  notifyStatusChange({ state: 'syncing', fileId, message: 'டிரைவ் / கூகிள் சீட்டிலிருந்து தானாக வாசிக்கப்படுகிறது...' });
+  notifyStatusChange({ state: 'syncing', fileId, message: 'டிரைவ் / கூகிள் சீட்டிலிருந்து வாசிக்கப்படுகிறது...' });
 
-  // Step 1: Attempt Server Proxy (CORS-safe direct download for shared Drive & Google Sheet)
+  // Step 1: Authenticated Drive API if user is connected (supports private user Drive files)
+  const token = getGoogleAccessToken();
+  if (token) {
+    try {
+      const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.status === 401) {
+        invalidateGoogleAccessToken();
+        notifyStatusChange({
+          state: 'error',
+          fileId,
+          message: 'கூகிள் டிரைவ் அனுமதி காலாவதியானது. மீண்டும் Connect Drive செய்யவும்.',
+        });
+        return null;
+      }
+
+      if (response.ok) {
+        const text = await response.text();
+        const data = safeParseDriveJsonText(text);
+        if (data) {
+          notifyStatusChange({
+            state: 'synced',
+            fileId,
+            lastSyncedAt: new Date().toISOString(),
+            message: 'டிரைவ் கோப்பிலிருந்து தரவுகள் வெற்றிகரமாக பெறப்பட்டன.',
+          });
+          return data;
+        }
+        // Empty / malformed placeholder file like "{ [ ] }" in user's Drive
+        notifyStatusChange({
+          state: 'idle',
+          fileId,
+          message: 'குறிக்கப்பட்ட டிரைவ் கோப்பு தற்போது காலியாக உள்ளது — உங்கள் தரவை அதில் சேமிக்கலாம்.',
+        });
+        return null;
+      }
+    } catch (e) {
+      console.warn('[Google Drive] Authenticated API fetch warning:', e);
+    }
+  }
+
+  // Step 2: Server Proxy for public Google Sheet or shared Drive file (only if custom sheet or explicit read)
   try {
     const proxyData = await fetchFromCloudProxy(customFileId);
     if (proxyData && (Array.isArray(proxyData.beneficiaries) || Array.isArray(proxyData.users))) {
@@ -204,32 +283,6 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
     console.warn('[Google Drive] Proxy load attempt error:', proxyErr);
   }
 
-  // Step 2: Attempt authenticated Google Drive API if user is signed in
-  const token = getGoogleAccessToken();
-  if (token) {
-    try {
-      const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        notifyStatusChange({
-          state: 'synced',
-          fileId,
-          lastSyncedAt: new Date().toISOString(),
-          message: 'டிரைவ் கோப்பிலிருந்து தரவுகள் வெற்றிகரமாக பெறப்பட்டது.',
-        });
-        return data;
-      }
-    } catch (e) {
-      console.warn('[Google Drive] Authenticated API fetch warning:', e);
-    }
-  }
-
   notifyStatusChange({
     state: 'idle',
     fileId,
@@ -241,11 +294,12 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
 /**
  * Saves/updates data directly into the designated Google Drive file.
  * Uses PATCH media to update in-place without creating duplicate files.
+ * Verifies returned Drive metadata and handles expired 401 tokens or read-only 403/404 targets.
  */
 export const saveToDesignatedDriveFile = async (
   snapshotData: any,
   customFileId?: string
-): Promise<{ success: boolean; fileId: string; fileName: string; timestamp: string }> => {
+): Promise<{ success: boolean; fileId: string; fileName: string; webViewLink?: string; timestamp: string }> => {
   const token = getGoogleAccessToken();
   if (!token) {
     notifyStatusChange({
@@ -261,8 +315,8 @@ export const saveToDesignatedDriveFile = async (
   const fileContent = JSON.stringify(snapshotData, null, 2);
 
   try {
-    // Attempt 1: In-place PATCH update of the designated file
-    const patchUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+    // Attempt 1: In-place PATCH update of the designated file (asks Drive to return id, name, webViewLink)
+    const patchUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,name,webViewLink,size`;
     const response = await fetch(patchUrl, {
       method: 'PATCH',
       headers: {
@@ -272,35 +326,57 @@ export const saveToDesignatedDriveFile = async (
       body: fileContent,
     });
 
+    if (response.status === 401) {
+      invalidateGoogleAccessToken();
+      throw new Error('கூகிள் டிரைவ் அணுகல் டோக்கன் காலாவதியாகிவிட்டது. தயவுசெய்து மீண்டும் Connect Drive பொத்தானை அழுத்தி உள்நுழையவும்.');
+    }
+
     if (response.ok) {
+      let savedMeta: any = {};
+      try {
+        savedMeta = await response.json();
+      } catch {
+        // ignore metadata parse error
+      }
+      const actualFileId = savedMeta.id || fileId;
+      const actualFileName = savedMeta.name || getDesignatedDriveFileName();
+      if (typeof window !== 'undefined' && savedMeta.name) {
+        localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_NAME, savedMeta.name);
+      }
+
       const now = new Date().toISOString();
       notifyStatusChange({
         state: 'synced',
-        fileId,
+        fileId: actualFileId,
+        fileName: actualFileName,
+        webViewLink: savedMeta.webViewLink,
         lastSyncedAt: now,
-        message: 'குறிக்கப்பட்ட கூகிள் டிரைவ் கோப்பில் வெற்றிகரமாக சேமிக்கப்பட்டது!',
+        message: `குறிக்கப்பட்ட டிரைவ் கோப்பில் (${actualFileName}) வெற்றிகரமாக சேமிக்கப்பட்டது!`,
       });
       return {
         success: true,
-        fileId,
-        fileName: 'vaharai_ds_master_database.json',
+        fileId: actualFileId,
+        fileName: actualFileName,
+        webViewLink: savedMeta.webViewLink,
         timestamp: now,
       };
     }
 
-    // If 404 (file doesn't exist in this user's Drive or was trashed), create a new designated master file
+    // If 404 (not in this user's Drive) or 403 (read-only shared file such as default template),
+    // create a writable master JSON file in the user's own Drive and set it as designated
     if (response.status === 404 || response.status === 403) {
-      console.warn(`Target file ${fileId} not writable or not found (${response.status}). Creating a new master file in user's Drive...`);
+      console.warn(`Target file ${fileId} not writable or not found (${response.status}). Creating writable master file in user's Drive...`);
       const newBackup = await uploadBackupToDrive(snapshotData, 'vaharai_ds_master_central_database.json');
-      setDesignatedDriveFileId(newBackup.id);
+      setDesignatedDriveFileId(newBackup.id, newBackup.name);
       fileId = newBackup.id;
 
       const now = new Date().toISOString();
       notifyStatusChange({
         state: 'synced',
         fileId: newBackup.id,
+        fileName: newBackup.name,
         lastSyncedAt: now,
-        message: `புதிய முதன்மை டிரைவ் கோப்பு உருவாக்கப்பட்டு சேமிக்கப்பட்டது (${newBackup.id})`,
+        message: `உங்கள் டிரைவில் புதிய முதன்மை கோப்பு (${newBackup.name}) உருவாக்கப்பட்டு சேமிக்கப்பட்டது!`,
       });
       return {
         success: true,
@@ -323,7 +399,7 @@ export const saveToDesignatedDriveFile = async (
 };
 
 /**
- * Debounced Auto-Drive Sync scheduler
+ * Debounced Auto-Drive Sync scheduler (runs when user has enabled Auto-Sync & is authenticated)
  */
 let driveAutoSyncTimer: any = null;
 
@@ -336,7 +412,6 @@ export const scheduleAutoDriveSync = (snapshotData?: any) => {
 
   driveAutoSyncTimer = setTimeout(async () => {
     try {
-      // Lazy load createDatabaseSnapshot if needed
       const data = snapshotData || (window as any).__vaharai_create_snapshot?.();
       if (data) {
         await saveToDesignatedDriveFile(data);
@@ -354,14 +429,19 @@ export const listDriveBackups = async (): Promise<DriveBackupItem[]> => {
   const token = getGoogleAccessToken();
   if (!token) throw new Error('Google Drive is not authenticated');
 
-  const query = encodeURIComponent("name contains 'vaharai_ds_' and trashed = false");
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,createdTime,size,modifiedTime)&orderBy=modifiedTime desc`;
+  const query = encodeURIComponent("(name contains 'vaharai_ds_' or name contains '.json' or mimeType = 'application/json') and trashed = false");
+  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=50&fields=files(id,name,createdTime,size,modifiedTime,webViewLink)&orderBy=modifiedTime desc`;
 
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
   });
+
+  if (response.status === 401) {
+    invalidateGoogleAccessToken();
+    throw new Error('Google Drive session expired. Please reconnect your Google account.');
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -373,7 +453,7 @@ export const listDriveBackups = async (): Promise<DriveBackupItem[]> => {
     id: f.id,
     name: f.name,
     createdTime: f.modifiedTime || f.createdTime,
-    size: f.size ? `${(parseInt(f.size, 10) / 1024).toFixed(1)} KB` : 'Unknown',
+    size: f.size ? `${(parseInt(f.size, 10) / 1024).toFixed(1)} KB` : 'Empty / Unknown',
   }));
 };
 
@@ -404,7 +484,7 @@ export const uploadBackupToDrive = async (snapshotData: any, customName?: string
     fileContent +
     closeDelimiter;
 
-  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -412,6 +492,11 @@ export const uploadBackupToDrive = async (snapshotData: any, customName?: string
     },
     body: multipartRequestBody,
   });
+
+  if (response.status === 401) {
+    invalidateGoogleAccessToken();
+    throw new Error('Google Drive session expired. Please reconnect Google Drive.');
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -438,12 +523,22 @@ export const downloadDriveBackup = async (fileId: string): Promise<any> => {
     },
   });
 
+  if (response.status === 401) {
+    invalidateGoogleAccessToken();
+    throw new Error('Google Drive session expired. Please reconnect Google Drive.');
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Download failed: ${response.status} ${errorText}`);
   }
 
-  return await response.json();
+  const text = await response.text();
+  const parsed = safeParseDriveJsonText(text);
+  if (!parsed) {
+    throw new Error('The selected Drive JSON file is empty or malformed (contains no valid database records).');
+  }
+  return parsed;
 };
 
 export const deleteDriveBackup = async (fileId: string): Promise<void> => {
@@ -457,6 +552,11 @@ export const deleteDriveBackup = async (fileId: string): Promise<void> => {
       Authorization: `Bearer ${token}`,
     },
   });
+
+  if (response.status === 401) {
+    invalidateGoogleAccessToken();
+    throw new Error('Google Drive session expired. Please reconnect Google Drive.');
+  }
 
   if (!response.ok && response.status !== 204) {
     const errorText = await response.text();

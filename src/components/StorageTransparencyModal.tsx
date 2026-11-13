@@ -87,9 +87,21 @@ export const StorageTransparencyModal: React.FC<StorageTransparencyModalProps> =
                     1. {lang === 'ta' ? 'இந்த கணினியின் உள்ளக களஞ்சியம் (Browser LocalStorage)' : 'Local Computer Browser Storage'}
                   </h4>
                 </div>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-[10px] font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  {lang === 'ta' ? 'செயலில் உள்ளது' : 'Active'}
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                    info.browserStorage.status === 'WARNING'
+                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                      : 'bg-emerald-100 text-emerald-800'
+                  }`}
+                >
+                  <CheckCircle2
+                    className={`w-3 h-3 ${
+                      info.browserStorage.status === 'WARNING' ? 'text-amber-700' : 'text-emerald-600'
+                    }`}
+                  />
+                  {info.browserStorage.status === 'WARNING'
+                    ? (lang === 'ta' ? 'நினைவகப் பாதுகாப்பு (Quota Warning)' : 'Memory Mode (Quota Full)')
+                    : (lang === 'ta' ? 'செயலில் உள்ளது' : 'Active')}
                 </span>
               </div>
               <p className="text-xs text-slate-600 mb-2">
@@ -142,15 +154,25 @@ export const StorageTransparencyModal: React.FC<StorageTransparencyModalProps> =
                     3. {lang === 'ta' ? 'கூகிள் டிரைவ் கிளவுட் சேமிப்பு (Google Drive Master Backup)' : 'Google Drive Cloud Storage'}
                   </h4>
                 </div>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-[10px] font-bold">
-                  {lang === 'ta' ? 'பாதுகாப்பானது' : 'Cloud Backed'}
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    info.cloudGoogleDrive.status === 'CONNECTED'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-900 border border-amber-300'
+                  }`}
+                >
+                  {info.cloudGoogleDrive.status === 'CONNECTED'
+                    ? (lang === 'ta' ? 'இணைக்கப்பட்டுள்ளது' : 'Cloud Connected')
+                    : (lang === 'ta' ? 'இணைக்கப்படவில்லை' : 'Not Connected')}
                 </span>
               </div>
               <p className="text-xs text-slate-600 mb-1">
-                {info.cloudGoogleDrive.descriptionTa}
+                {lang === 'ta' ? info.cloudGoogleDrive.descriptionTa : info.cloudGoogleDrive.descriptionEn}
               </p>
-              <div className="text-[11px] font-mono text-slate-500 bg-white px-2.5 py-1 rounded border border-slate-200">
-                {lang === 'ta' ? 'கோப்பு பெயர்:' : 'File:'} <strong className="text-slate-800">{info.cloudGoogleDrive.fileName}</strong>
+              <div className="text-[11px] font-mono text-slate-500 bg-white px-2.5 py-1 rounded border border-slate-200 break-all">
+                {lang === 'ta' ? 'கோப்பு பெயர்:' : 'File:'}{' '}
+                <strong className="text-slate-800">{info.cloudGoogleDrive.fileName}</strong>{' '}
+                <span className="text-slate-400">({info.cloudGoogleDrive.fileId})</span>
               </div>
             </div>
 

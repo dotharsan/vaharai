@@ -79,6 +79,7 @@ export default function handler(req: any, res: any) {
       inMemorySnapshot = snapshot;
 
       // Try persisting to disk if writable (writes to runtime data folder, avoiding src reloads)
+      let diskPersisted = false;
       try {
         const cwd = process.cwd();
         const dataPath = path.join(cwd, 'data', 'central_database.json');
@@ -87,18 +88,23 @@ export default function handler(req: any, res: any) {
           fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(dataPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+        diskPersisted = true;
       } catch (err) {
         console.warn('Central database disk write error:', err);
       }
 
       return res.status(200).json({
         success: true,
+        diskPersisted,
         message: 'Central database updated successfully',
         lastServerSync: snapshot.lastServerSync,
         counts: {
           citizens: snapshot.beneficiaries?.length || 0,
           households: snapshot.households?.length || 0,
           landRecords: snapshot.landRecords?.length || 0,
+          pregnantMothers: snapshot.pregnantMothers?.length || 0,
+          assistance: snapshot.assistance?.length || 0,
+          divisions: snapshot.divisions?.length || 0,
           tokens: snapshot.tokens?.length || 0,
           users: snapshot.users?.length || 0,
         },

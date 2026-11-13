@@ -61,7 +61,7 @@ export const ThermalPrintReceipt: React.FC<ThermalPrintReceiptProps> = ({
         {/* Screen Header Controls */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-200 no-print">
           <div className="flex items-center gap-2">
-            <VaharaiLogo size={24} className="w-6 h-6" />
+            <VaharaiLogo size={24} className="w-6 h-6" dsDivisionId={token.dsDivisionId} />
             <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
               Thermal Receipt (58mm / 80mm)
             </span>
@@ -80,7 +80,7 @@ export const ThermalPrintReceipt: React.FC<ThermalPrintReceiptProps> = ({
           {/* Emblem & Official Header */}
           <div className="mb-2 flex flex-col items-center">
             <div className="mb-1">
-              <VaharaiLogo size={42} className="w-10 h-10" />
+              <VaharaiLogo size={42} className="w-10 h-10" dsDivisionId={token.dsDivisionId} />
             </div>
             <div className="text-[10px] tracking-wide text-slate-700">
               இலங்கை ஜனநாயக சோசலிசக் குடியரசு

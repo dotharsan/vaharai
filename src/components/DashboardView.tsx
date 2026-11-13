@@ -1,7 +1,20 @@
-import React from 'react';
-import { Beneficiary, QueueToken, GNDivision, User, SystemAuditLog, BATTICALOA_DS_DIVISIONS } from '../types';
+import React, { useState } from 'react';
+import {
+  Beneficiary,
+  QueueToken,
+  GNDivision,
+  User,
+  SystemAuditLog,
+  AssistanceRecord,
+  PregnantMotherRecord,
+  LandRecord,
+  HouseholdData,
+} from '../types';
 import { Language, translations } from '../translations/i18n';
-import { calculateAge, getDsDivisionById } from '../services/storage';
+import { calculateAge, getDsDivisionById, logAuditAction } from '../services/storage';
+import { VaharaiLogo } from './VaharaiLogo';
+import { LogoSettingsModal } from './LogoSettingsModal';
+import { ImagePlus } from 'lucide-react';
 
 interface DashboardViewProps {
   beneficiaries: Beneficiary[];
@@ -9,6 +22,10 @@ interface DashboardViewProps {
   divisions: GNDivision[];
   users: User[];
   auditLogs: SystemAuditLog[];
+  assistanceRecords?: AssistanceRecord[];
+  pregnantMothers?: PregnantMotherRecord[];
+  landRecords?: LandRecord[];
+  households?: HouseholdData[];
   currentUser: User;
   lang: Language;
   onNavigate: (tab: string) => void;
@@ -21,15 +38,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   divisions,
   users,
   auditLogs,
+  assistanceRecords = [],
+  pregnantMothers = [],
+  landRecords = [],
+  households = [],
   currentUser,
   lang,
   onNavigate,
   selectedDsDivisionId,
 }) => {
   const t = translations[lang];
+  const [showLogoModal, setShowLogoModal] = useState(false);
 
   // Dynamic DS Division resolution
   const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
+  const isSuperAdmin = currentUser.role === 'SUPERADMIN';
   const effectiveDsId = isDistrictAdmin
     ? (selectedDsDivisionId && selectedDsDivisionId !== 'ALL' ? selectedDsDivisionId : null)
     : (currentUser.dsDivisionId || 'DS_VAHARAI');
@@ -52,57 +75,137 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ? (lang === 'ta' ? `மட்டக்களப்பு மாவட்டம் · ${currentDs.allocatedGnCount} கிராம அலுவலர் பிரிவுகள்` : `Batticaloa District · ${currentDs.allocatedGnCount} GN Divisions`)
         : t.appSubTitle);
 
-  // If GN Officer, filter data relevant to their division
+  // If GN Officer, filter data relevant to their division (case-insensitive normalized)
   const isGN = currentUser.role === 'GRAMANIILATHARI';
-  const divisionCode = currentUser.division || '211';
+  const divisionCode = (currentUser.division || '211').trim();
+  const normDiv = (code?: string) => (code || '').trim().toUpperCase();
+  const normalizedOfficerDiv = normDiv(divisionCode);
 
   const relevantBeneficiaries = isGN
-    ? beneficiaries.filter((b) => b.divisionCode === divisionCode)
+    ? beneficiaries.filter((b) => normDiv(b.divisionCode) === normalizedOfficerDiv)
     : beneficiaries;
 
   const relevantTokens = isGN
-    ? tokens.filter((tok) => tok.divisionCode === divisionCode)
+    ? tokens.filter((tok) => normDiv(tok.divisionCode) === normalizedOfficerDiv)
     : tokens;
+
+  const relevantAssistance = isGN
+    ? assistanceRecords.filter((a) => normDiv(a.divisionCode) === normalizedOfficerDiv)
+    : assistanceRecords;
+
+  const relevantPregnant = isGN
+    ? pregnantMothers.filter((m) => normDiv(m.divisionCode) === normalizedOfficerDiv)
+    : pregnantMothers;
+
+  const relevantLand = isGN
+    ? landRecords.filter((l) => normDiv(l.divisionCode) === normalizedOfficerDiv)
+    : landRecords;
+
+  const relevantHouseholds = isGN
+    ? households.filter((h) => normDiv(h.divisionCode) === normalizedOfficerDiv)
+    : households;
 
   // Key Counts
   const totalCitizens = relevantBeneficiaries.length;
-  const totalFamilies = new Set(relevantBeneficiaries.map((b) => b.householdNo)).size;
+  const derivedFamilies = new Set(
+    relevantBeneficiaries.map((b) => b.familyCode || b.householdNo).filter(Boolean)
+  ).size;
+  const totalFamilies = Math.max(derivedFamilies, relevantHouseholds.length);
   const waitingTokensCount = relevantTokens.filter((tItem) => tItem.status === 'WAITING').length;
-  const aswesumaCount = relevantBeneficiaries.filter((b) => b.welfareScheme.startsWith('ASWESUMA')).length;
-  const samurdhiCount = relevantBeneficiaries.filter((b) => b.welfareScheme === 'SAMURDHI').length;
+  const aswesumaCount = relevantBeneficiaries.filter(
+    (b) => b.welfareScheme?.startsWith('ASWESUMA') || b.welfareSchemes?.some((s) => s.startsWith('ASWESUMA'))
+  ).length;
+  const samurdhiCount = relevantBeneficiaries.filter(
+    (b) => b.welfareScheme === 'SAMURDHI' || b.welfareSchemes?.includes('SAMURDHI') || b.isSamurdhiBeneficiary
+  ).length;
   const chronicIllnessCount = relevantBeneficiaries.filter((b) => b.chronicIllness && b.chronicIllness !== 'NONE').length;
-  const youth16Count = relevantBeneficiaries.filter((b) => calculateAge(b.dob) === 16).length;
+  const youth16Count = relevantBeneficiaries.filter((b) => calculateAge(b.dob, b.nic) === 16).length;
+  const activePregnantCount = relevantPregnant.filter(
+    (m) => m.status === 'ACTIVE_COLLECTING' || m.status === 'WAITING_STAMP'
+  ).length;
 
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-emerald-900 via-emerald-800 to-slate-900 rounded-xl p-5 sm:p-6 text-white shadow-md relative overflow-hidden">
-        <div className="relative z-10 max-w-2xl">
-          <div className="text-[10px] sm:text-xs uppercase tracking-wider text-amber-300 font-bold mb-1">
-            {lang === 'ta' ? 'அதிகாரப்பூர்வ நிர்வாக தளம்' : 'Official Administration Portal'}
-          </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            {dashboardTitle}
-          </h1>
-          <p className="text-xs text-emerald-100 mt-1 leading-relaxed">
-            {dashboardSubtitle}
-          </p>
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-4 max-w-2xl">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-white p-1 border-2 border-amber-400 flex items-center justify-center shrink-0 shadow-lg">
+              <VaharaiLogo
+                size={54}
+                className="w-12 h-12 sm:w-14 sm:h-14"
+                dsDivisionId={effectiveDsId || 'DISTRICT_HQ'}
+              />
+            </div>
+            <div>
+              <div className="text-[10px] sm:text-xs uppercase tracking-wider text-amber-300 font-bold mb-1">
+                {lang === 'ta' ? 'அதிகாரப்பூர்வ நிர்வாக தளம்' : 'Official Administration Portal'}
+              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+                {dashboardTitle}
+              </h1>
+              <p className="text-xs text-emerald-100 mt-1 leading-relaxed">
+                {dashboardSubtitle}
+              </p>
 
-          <div className="flex items-center gap-2.5 mt-4 flex-wrap text-xs">
-            <span className="bg-emerald-950/70 border border-emerald-700/60 px-3 py-1 rounded-lg">
-              👤 {t.loggedAs}: <strong className="font-semibold text-white">{currentUser.name}</strong>
-            </span>
-            <span className="bg-emerald-950/70 border border-emerald-700/60 px-3 py-1 rounded-lg">
-              🛡️ {t.role}: <strong className="font-mono text-amber-300">{currentUser.role}</strong>
-            </span>
-            {isGN && (
-              <span className="bg-amber-400 text-slate-950 px-2.5 py-1 rounded-lg font-bold font-mono">
-                GN {divisionCode}
-              </span>
-            )}
+              <div className="flex items-center gap-2.5 mt-3 flex-wrap text-xs">
+                <span className="bg-emerald-950/70 border border-emerald-700/60 px-3 py-1 rounded-lg">
+                  👤 {t.loggedAs}: <strong className="font-semibold text-white">{currentUser.name}</strong>
+                </span>
+                <span className="bg-emerald-950/70 border border-emerald-700/60 px-3 py-1 rounded-lg">
+                  🛡️ {t.role}: <strong className="font-mono text-amber-300">{currentUser.role}</strong>
+                </span>
+                {isGN && (
+                  <span className="bg-amber-400 text-slate-950 px-2.5 py-1 rounded-lg font-bold font-mono">
+                    GN {divisionCode}
+                  </span>
+                )}
+                {isGN && beneficiaries.length > relevantBeneficiaries.length && (
+                  <span className="bg-emerald-950/80 border border-amber-400/50 text-amber-200 px-2.5 py-1 rounded-lg text-[11px]">
+                    {lang === 'ta'
+                      ? `மொத்த செயலகம்: ${beneficiaries.length} · உங்கள் பிரிவு: ${relevantBeneficiaries.length}`
+                      : `DS Total: ${beneficiaries.length} · Your GN: ${relevantBeneficiaries.length}`}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
+
+          {(isSuperAdmin || isDistrictAdmin) && (
+            <div className="shrink-0 self-start md:self-center">
+              <button
+                onClick={() => setShowLogoModal(true)}
+                className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-colors cursor-pointer"
+                title={lang === 'ta' ? 'செயலக லோகோவை மாற்றுக' : 'Change Secretariat Logo'}
+              >
+                <ImagePlus className="w-4 h-4" />
+                <span>{lang === 'ta' ? 'செயலக லோகோ மாற்றுக' : 'Customize Logo'}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Logo Management Modal for Super Admin / District Admin */}
+      {(isSuperAdmin || isDistrictAdmin) && (
+        <LogoSettingsModal
+          isOpen={showLogoModal}
+          onClose={() => setShowLogoModal(false)}
+          targetId={effectiveDsId || 'DISTRICT_HQ'}
+          targetNameTa={
+            currentDs
+              ? `${currentDs.nameTa} பிரதேச செயலகம்`
+              : 'மட்டக்களப்பு மாவட்ட செயலகம்'
+          }
+          targetNameEn={
+            currentDs
+              ? `${currentDs.nameEn} Divisional Secretariat`
+              : 'Batticaloa District Secretariat'
+          }
+          lang={lang}
+          onAuditLog={(action, details) => logAuditAction(currentUser.id, currentUser.name, action, details)}
+        />
+      )}
 
       {/* Metrics Grid (Responsive 2x3 or 3x2) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -191,6 +294,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Module Coverage Summary Cards (Households, Land, Maternity, Relief Aid) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <button
+          type="button"
+          onClick={() => onNavigate('family-center')}
+          className="bg-white hover:bg-emerald-50/50 border border-slate-200 hover:border-emerald-300 rounded-xl p-3.5 shadow-xs text-left transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+            <span className="truncate">{lang === 'ta' ? 'குடும்ப தரவு மையம்' : 'Family Data Center'}</span>
+            <span>🏘️</span>
+          </div>
+          <div className="mt-1 text-xl font-bold font-mono text-emerald-900 tabular-nums">
+            {relevantHouseholds.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {lang === 'ta' ? 'மதிப்பிடப்பட்ட குடும்ப அலகுகள்' : 'Scored Household Units'}
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('land')}
+          className="bg-white hover:bg-amber-50/40 border border-slate-200 hover:border-amber-300 rounded-xl p-3.5 shadow-xs text-left transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+            <span className="truncate">{lang === 'ta' ? 'காணிப் பதிவுகள் (Land)' : 'Land Records'}</span>
+            <span>🗺️</span>
+          </div>
+          <div className="mt-1 text-xl font-bold font-mono text-slate-900 tabular-nums">
+            {relevantLand.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {lang === 'ta' ? 'அனுமதிப்பத்திரம் / LDO ஆவணங்கள்' : 'Permits & LDO Grants'}
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('maternity')}
+          className="bg-white hover:bg-pink-50/40 border border-slate-200 hover:border-pink-300 rounded-xl p-3.5 shadow-xs text-left transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+            <span className="truncate">{lang === 'ta' ? 'கர்ப்பிணித் தாய்மார்' : 'Pregnant Mothers'}</span>
+            <span>🤰</span>
+          </div>
+          <div className="mt-1 text-xl font-bold font-mono text-pink-800 tabular-nums">
+            {relevantPregnant.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {lang === 'ta' ? `${activePregnantCount} செயலில் உள்ள முத்திரை` : `${activePregnantCount} Active Stamps`}
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate('assistance')}
+          className="bg-white hover:bg-rose-50/40 border border-slate-200 hover:border-rose-300 rounded-xl p-3.5 shadow-xs text-left transition-colors"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-500 font-semibold">
+            <span className="truncate">{lang === 'ta' ? 'நிவாரண உதவிகள்' : 'Relief Distributions'}</span>
+            <span>🎁</span>
+          </div>
+          <div className="mt-1 text-xl font-bold font-mono text-rose-800 tabular-nums">
+            {relevantAssistance.length}
+          </div>
+          <div className="mt-0.5 text-[10px] text-slate-500">
+            {lang === 'ta' ? 'பதிவான உதவி விநியோகங்கள்' : 'Recorded Aid Distributions'}
+          </div>
+        </button>
+      </div>
+
       {/* Quick Action Shortcuts */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
         <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
@@ -269,8 +443,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {divisions.map((d) => {
-                  const divCitizens = beneficiaries.filter((b) => b.divisionCode === d.code).length;
-                  const isCurrentOfficerDiv = isGN && divisionCode === d.code;
+                  const divCitizens = beneficiaries.filter((b) => normDiv(b.divisionCode) === normDiv(d.code)).length;
+                  const isCurrentOfficerDiv = isGN && normalizedOfficerDiv === normDiv(d.code);
                   return (
                     <tr
                       key={d.code}

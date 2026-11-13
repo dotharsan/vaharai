@@ -15,6 +15,10 @@ import {
   LandRecord,
   LandType,
   LandPermitStatus,
+  HouseholdData,
+  HouseholdCommonAssets,
+  DEFAULT_POVERTY_WEIGHTS,
+  calculateFamilyPovertyScore,
 } from '../types';
 import { 
   generateSystemCitizenId, 
@@ -240,7 +244,50 @@ export const generateBeneficiarySampleCsv = (): string => {
   return sampleRows.join('\n');
 };
 
-export const parseBeneficiariesFromCsv = (csvText: string): { items: Beneficiary[]; errors: string[] } => {
+const ensureUniqueSystemId = (
+  candidateId: string | undefined,
+  divisionCode: string,
+  usedIds: Set<string>,
+  seedCounter: number
+): string => {
+  let id = candidateId?.trim() || '';
+  if (!id || id.length < 3 || usedIds.has(id)) {
+    let n = seedCounter;
+    do {
+      id = generateSystemCitizenId(divisionCode, n);
+      n++;
+    } while (usedIds.has(id));
+  }
+  usedIds.add(id);
+  return id;
+};
+
+const ensureUniqueProvisionalNic = (
+  rawNic: string | undefined,
+  divisionCode: string,
+  usedNics: Set<string>
+): { nic: string; isProvisional: boolean } => {
+  const clean = rawNic?.trim() || '';
+  if (!clean) {
+    let generated = '';
+    do {
+      generated = generateProvisionalNic(divisionCode);
+    } while (usedNics.has(generated));
+    usedNics.add(generated);
+    return { nic: generated, isProvisional: true };
+  }
+  usedNics.add(clean);
+  return {
+    nic: clean,
+    isProvisional: clean.startsWith('TNIC') || clean.startsWith('TEMP'),
+  };
+};
+
+export const parseBeneficiariesFromCsv = (
+  csvText: string,
+  defaultDivisionCode?: string,
+  existingBeneficiaries: Beneficiary[] = []
+): { items: Beneficiary[]; errors: string[] } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) {
     return { items: [], errors: ['CSV file is empty or missing data rows.'] };
@@ -248,52 +295,45 @@ export const parseBeneficiariesFromCsv = (csvText: string): { items: Beneficiary
 
   const items: Beneficiary[] = [];
   const errors: string[] = [];
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
 
   const headers = rows[0].map((h) => h.trim().toLowerCase());
-  const hasFamilyCodeCol = headers.some((h) => h.includes('family_code') || h.includes('fam'));
-  const hasRelCol = headers.some((h) => h.includes('relationship') || h.includes('rel'));
 
-  // Detect column mapping intelligently
+  // Detect column mapping intelligently (strict ID matching to avoid false-matching Family_ID/GN_ID)
   const colIndex = {
-    id: headers.findIndex((h) => h.includes('system') || h.includes('id')),
-    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr'),
-    rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel') || h.includes('role')),
-    nic: headers.findIndex((h) => h.includes('nic')),
-    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name'),
+    id: headers.findIndex((h) => h === 'id' || h === 'system_id' || h.includes('system_id') || h.includes('citizen_id') || h === 'system id'),
+    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr' || h.includes('குடும்ப_குறியீடு')),
+    rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel' || h === 'role' || h.includes('உறவு')),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
     nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english')),
-    gender: headers.findIndex((h) => h.includes('gender') || h.includes('sex')),
-    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth')),
-    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile')),
-    address: headers.findIndex((h) => h.includes('address')),
-    division: headers.findIndex((h) => h.includes('division')),
-    head: headers.findIndex((h) => h.includes('family_head') || h.includes('head')),
-    household: headers.findIndex((h) => h.includes('household')),
-    illness: headers.findIndex((h) => h.includes('illness') || h.includes('chronic')),
-    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('scheme') || h.includes('aid')),
-    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark')),
+    gender: headers.findIndex((h) => h.includes('gender') || h.includes('sex') || h.includes('பால்')),
+    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth') || h.includes('பிறந்த')),
+    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('தொலைபேசி')),
+    address: headers.findIndex((h) => h.includes('address') || h.includes('முகவரி')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h === 'gn_code' || h.includes('பிரிவு')),
+    head: headers.findIndex((h) => h.includes('family_head') || h === 'head' || h.includes('தலைவர்')),
+    household: headers.findIndex((h) => h.includes('household') || h.includes('வீட்டு')),
+    illness: headers.findIndex((h) => h.includes('illness') || h.includes('chronic') || h.includes('நோய்')),
+    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('scheme') || h.includes('aid') || h.includes('உதவி')),
+    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark') || h.includes('குறிப்பு')),
   };
 
-  const startIndex = (colIndex.nic !== -1 || colIndex.id !== -1 || colIndex.nameTa !== -1) ? 1 : 0;
+  const hasKnownHeader = colIndex.nic !== -1 || colIndex.id !== -1 || colIndex.nameTa !== -1 || colIndex.familyCode !== -1;
+  const startIndex = hasKnownHeader ? 1 : 0;
 
   for (let i = startIndex; i < rows.length; i++) {
     const row = rows[i];
-    if (row.length < 3 || !row.some((cell) => cell.trim())) continue;
+    if (row.length < 2 || !row.some((cell) => cell.trim())) continue;
 
-    const divisionCode = (colIndex.division !== -1 ? row[colIndex.division] : row[8])?.trim() || '211';
-    let id = (colIndex.id !== -1 ? row[colIndex.id] : row[0])?.trim();
-    if (!id || id.length < 3) {
-      id = generateSystemCitizenId(divisionCode, i + 1);
-    }
+    const rawDiv = (colIndex.division !== -1 ? row[colIndex.division] : row[8])?.trim();
+    const divisionCode = (rawDiv || defaultDivisionCode || '211').toUpperCase();
+    const rawId = (colIndex.id !== -1 ? row[colIndex.id] : row[0])?.trim();
+    const id = ensureUniqueSystemId(rawId, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
-    let nic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[1])?.trim() || '';
-    let isProvisional = false;
-
-    if (!nic) {
-      nic = generateProvisionalNic(divisionCode);
-      isProvisional = true;
-    } else if (nic.startsWith('TNIC') || nic.startsWith('TEMP')) {
-      isProvisional = true;
-    }
+    const rawNic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[1])?.trim() || '';
+    const { nic, isProvisional } = ensureUniqueProvisionalNic(rawNic, divisionCode, usedNics);
 
     const nameTa = (colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[2])?.trim() || '';
     const nameEn = (colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[3])?.trim() || nameTa;
@@ -524,6 +564,63 @@ export const generateDivisionsSampleCsv = (): string => {
   return sampleRows.join('\n');
 };
 
+export const parseDivisionsFromCsv = (
+  csvText: string,
+  defaultDsDivisionId: string = 'DS_VAHARAI'
+): { items: GNDivision[]; errors: string[] } => {
+  const rows = parseCsvContent(csvText);
+  if (rows.length < 2) {
+    return { items: [], errors: ['CSV file is empty or missing data rows.'] };
+  }
+
+  const items: GNDivision[] = [];
+  const errors: string[] = [];
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+
+  const colIndex = {
+    code: headers.findIndex((h) => h.includes('code') || h === 'gn' || h === 'gn_code' || h.includes('குறியீடு') || h.includes('இலக்கம்')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
+    nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english')),
+    officer: headers.findIndex((h) => h.includes('officer') || h.includes('அலுவலர்')),
+    population: headers.findIndex((h) => h.includes('pop') || h.includes('மக்கள்')),
+    households: headers.findIndex((h) => h.includes('house') || h.includes('குடும்ப')),
+    dsId: headers.findIndex((h) => h.includes('ds_div') || h.includes('dsdivision') || h.includes('secretariat')),
+  };
+
+  const hasHeader = colIndex.code !== -1 || colIndex.nameTa !== -1 || colIndex.nameEn !== -1 || headers.some((h) => h.includes('division'));
+  const startIndex = hasHeader ? 1 : 0;
+
+  for (let i = startIndex; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length < 2 || !row.some((c) => c.trim())) continue;
+
+    const code = (colIndex.code !== -1 ? row[colIndex.code] : row[0])?.trim().toUpperCase();
+    const nameTa = (colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[1])?.trim() || code;
+    const nameEn = (colIndex.nameEn !== -1 ? row[colIndex.nameEn] : (row[2] || nameTa))?.trim() || nameTa;
+    const gnOfficerName = (colIndex.officer !== -1 ? row[colIndex.officer] : row[3])?.trim() || '';
+    const population = parseInt((colIndex.population !== -1 ? row[colIndex.population] : row[4])?.trim() || '0', 10) || 0;
+    const households = parseInt((colIndex.households !== -1 ? row[colIndex.households] : row[5])?.trim() || '0', 10) || 0;
+    const dsDivisionId = (colIndex.dsId !== -1 ? row[colIndex.dsId] : undefined)?.trim() || defaultDsDivisionId;
+
+    if (!code) {
+      errors.push(`Row ${i + 1}: Skipped due to missing Division Code.`);
+      continue;
+    }
+
+    items.push({
+      code,
+      nameTa,
+      nameEn,
+      gnOfficerName,
+      population,
+      households,
+      dsDivisionId,
+    });
+  }
+
+  return { items, errors };
+};
+
 export const exportDivisionsToCsv = (divs: GNDivision[]): string => {
   const lines = [DIVISIONS_CSV_HEADERS.join(',')];
   for (const d of divs) {
@@ -537,6 +634,129 @@ export const exportDivisionsToCsv = (divs: GNDivision[]): string => {
     ].join(','));
   }
   return lines.join('\n');
+};
+
+const DEFAULT_CSV_COMMON_ASSETS: HouseholdCommonAssets = {
+  ownsLand: false,
+  landExtent: 'NONE',
+  ownsOtherLand: false,
+  otherLandExtent: 'NONE',
+  vehicleType: 'NONE',
+  machineryType: 'NONE',
+  livestockType: 'NONE',
+  livestockCount: 0,
+  expenses: {
+    food: 15000,
+    water: 0,
+    clothing: 1000,
+    medical: 1500,
+    rent: 0,
+    transport: 1000,
+    electricity: 800,
+    fuelGas: 1500,
+    telecom: 500,
+    education: 1000,
+    religiousLeisure: 0,
+    loansDebt: 0,
+    total: 22300,
+  },
+  income: {
+    unstableSources: 12000,
+    salary: 0,
+    business: 0,
+    agriculture: 0,
+    rent: 0,
+    pension: 0,
+    samurdhi: 0,
+    elderlyAid: 0,
+    disabilityAid: 0,
+    ckdAid: 0,
+    foreignRemittance: 0,
+    localRemittance: 0,
+    otherGovAid: 0,
+    other: 0,
+    total: 12000,
+  },
+  electricityUnitsKwh: 30,
+  unitType: 'SINGLE_1_STORY',
+  floorMaterial: 'CEMENT',
+  roofMaterial: 'SHEET_ALUMINIUM',
+  wallMaterial: 'CEMENT_BLOCK',
+  houseArea: 'LESS_THAN_500_SQFT',
+  ownsCurrentHouse: true,
+  ownsOtherHouse: false,
+  lightingSource: 'GRID_ELECTRICITY',
+  waterSource: 'PROTECTED_WELL',
+  toiletLocation: 'OUTDOOR_EXCLUSIVE',
+  toiletNature: 'WATER_SEAL_PIT',
+  isSingleParent: false,
+};
+
+export const buildHouseholdsFromBeneficiaries = (
+  citizens: Beneficiary[],
+  existingHouseholds: HouseholdData[] = []
+): HouseholdData[] => {
+  const familyGroups = new Map<string, Beneficiary[]>();
+  for (const c of citizens) {
+    const fCode = (c.familyCode || `FAM-${c.divisionCode || '211'}-001`).trim().toUpperCase();
+    const list = familyGroups.get(fCode) || [];
+    list.push(c);
+    familyGroups.set(fCode, list);
+  }
+
+  const householdMap = new Map<string, HouseholdData>();
+  existingHouseholds.forEach((h) => {
+    const key = (h.familyCode || h.id).trim().toUpperCase();
+    householdMap.set(key, h);
+  });
+
+  const now = new Date().toISOString();
+
+  for (const [familyCode, members] of familyGroups.entries()) {
+    const head =
+      members.find((m) => m.familyHead || m.familyRelationship === 'HEAD' || m.familyRelationship === 'FATHER') ||
+      members[0];
+    if (!head) continue;
+
+    const existing = householdMap.get(familyCode);
+    const commonAssets = existing?.commonAssets || DEFAULT_CSV_COMMON_ASSETS;
+    const score = calculateFamilyPovertyScore(commonAssets, members, DEFAULT_POVERTY_WEIGHTS);
+    const hasExtreme = members.some((m) => m.welfareSchemes?.includes('ASWESUMA_EXTREME'));
+    const hasPoor = members.some((m) => m.welfareSchemes?.includes('ASWESUMA_POOR'));
+
+    householdMap.set(familyCode, {
+      id: existing?.id || head.householdNo || `HH-${familyCode}`,
+      familyCode,
+      householdReference: existing?.householdReference || head.householdNo || `HH-${familyCode}`,
+      applicationReference: existing?.applicationReference || `CSV-${familyCode}`,
+      applicantNameTa: existing?.applicantNameTa || head.nameTa,
+      applicantNameEn: existing?.applicantNameEn || head.nameEn || head.nameTa,
+      applicantNic: existing?.applicantNic || head.nic,
+      phone: existing?.phone || head.phone || '',
+      address: existing?.address || head.address || '',
+      divisionCode: (existing?.divisionCode || head.divisionCode || '211').toUpperCase(),
+      dsDivisionId: existing?.dsDivisionId || head.dsDivisionId,
+      status: existing?.status || 'ACTIVE',
+      selectedCategory: existing?.selectedCategory || (hasExtreme ? 'EXTREME_POOR' : hasPoor ? 'POOR' : 'VULNERABLE'),
+      bankDetails: existing?.bankDetails || {
+        bankName: '-',
+        branch: '-',
+        accountNumber: '-',
+        accountName: head.nameEn || head.nameTa,
+        status: 'PENDING',
+      },
+      commonAssets,
+      totalMembersCount: members.length,
+      familyQrPayload: existing?.familyQrPayload || head.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${head.divisionCode}`,
+      score100: score.score100,
+      priorityRank: score.priorityRank,
+      scoreBreakdown: score.breakdown,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    });
+  }
+
+  return Array.from(householdMap.values());
 };
 
 // ================= FAMILIES CSV (குடும்பப் பதிவு மாதிரி & அப்லோட் - தாய், தந்தை, மகன், மகள்) ================= //
@@ -581,7 +801,8 @@ export const generateFamiliesSampleCsv = (): string => {
 
 export const parseFamiliesFromCsv = (
   csvText: string,
-  existingBeneficiaries: Beneficiary[]
+  existingBeneficiaries: Beneficiary[],
+  defaultDivisionCode?: string
 ): { items: Beneficiary[]; errors: string[]; familyCount: number } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) {
@@ -591,42 +812,38 @@ export const parseFamiliesFromCsv = (
   const items: Beneficiary[] = [];
   const errors: string[] = [];
   const processedFamilyCodes = new Set<string>();
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
 
   const headers = rows[0].map((h) => h.trim().toLowerCase());
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr'),
-    rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel') || h.includes('role')),
-    nic: headers.findIndex((h) => h.includes('nic')),
-    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'head_name_tamil' || h === 'name'),
+    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr' || h.includes('குடும்ப')),
+    rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel' || h === 'role' || h.includes('உறவு')),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'head_name_tamil' || h === 'name' || h.includes('பெயர்')),
     nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english') || h === 'head_name_english'),
-    gender: headers.findIndex((h) => h.includes('gender') || h.includes('sex')),
-    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth')),
-    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile')),
-    address: headers.findIndex((h) => h.includes('address')),
-    division: headers.findIndex((h) => h.includes('division')),
-    household: headers.findIndex((h) => h.includes('household')),
-    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('scheme') || h.includes('aid')),
-    illness: headers.findIndex((h) => h.includes('illness') || h.includes('chronic')),
-    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark')),
+    gender: headers.findIndex((h) => h.includes('gender') || h.includes('sex') || h.includes('பால்')),
+    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth') || h.includes('பிறந்த')),
+    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('தொலைபேசி')),
+    address: headers.findIndex((h) => h.includes('address') || h.includes('முகவரி')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
+    household: headers.findIndex((h) => h.includes('household') || h.includes('வீட்டு')),
+    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('scheme') || h.includes('aid') || h.includes('உதவி')),
+    illness: headers.findIndex((h) => h.includes('illness') || h.includes('chronic') || h.includes('நோய்')),
+    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark') || h.includes('குறிப்பு')),
   };
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 3 || !row.some((cell) => cell.trim())) continue;
 
-    const divisionCode = (colIndex.division !== -1 ? row[colIndex.division] : row[1])?.trim() || '211';
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${Math.floor(Math.random() * 900 + 100)}`;
-    const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
+    const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[1])?.trim() || defaultDivisionCode || '211').toUpperCase();
+    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
+    const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
     const familyRelationship = parseRelationshipString(relRaw);
 
-    let nic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[3])?.trim() || '';
-    let isProvisional = false;
-    if (!nic) {
-      nic = generateProvisionalNic(divisionCode);
-      isProvisional = true;
-    } else if (nic.startsWith('TNIC') || nic.startsWith('TEMP')) {
-      isProvisional = true;
-    }
+    const rawNic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[3])?.trim() || '';
+    const { nic, isProvisional } = ensureUniqueProvisionalNic(rawNic, divisionCode, usedNics);
 
     const nameTa = (colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[4])?.trim() || 'பெயர் குறிப்பிடப்படவில்லை';
     const nameEn = (colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[5])?.trim() || nameTa;
@@ -655,7 +872,7 @@ export const parseFamiliesFromCsv = (
 
     const isHead = familyRelationship === 'HEAD' || familyRelationship === 'FATHER' || (!processedFamilyCodes.has(familyCode) && items.filter(m => m.familyCode === familyCode).length === 0);
     const familyQrPayload = generateUniqueFamilyQrPayload(familyCode, divisionCode);
-    const systemId = generateSystemCitizenId(divisionCode, existingBeneficiaries.length + items.length + 1);
+    const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
     const isPregnant = welfareSchemes.includes('PREGNANT_NUTRITION') || (row.join(' ').includes('கர்ப்பிணி'));
     const isElderly = welfareSchemes.includes('ELDERLY') || calculateAge(dob) >= 60;
@@ -739,26 +956,29 @@ export const generateElderlySampleCsv = (): string => {
 
 export const parseElderlyFromCsv = (
   csvText: string,
-  existingBeneficiaries: Beneficiary[]
+  existingBeneficiaries: Beneficiary[],
+  defaultDivisionCode?: string
 ): { items: Beneficiary[]; errors: string[] } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) return { items: [], errors: ['CSV file is empty or missing data rows.'] };
 
   const items: Beneficiary[] = [];
   const errors: string[] = [];
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
     familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
     rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel')),
-    nic: headers.findIndex((h) => h.includes('nic')),
-    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name'),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
     nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english')),
-    gender: headers.findIndex((h) => h.includes('gender')),
-    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth')),
-    phone: headers.findIndex((h) => h.includes('phone')),
-    address: headers.findIndex((h) => h.includes('address')),
-    division: headers.findIndex((h) => h.includes('division')),
+    gender: headers.findIndex((h) => h.includes('gender') || h.includes('பால்')),
+    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth') || h.includes('பிறந்த')),
+    phone: headers.findIndex((h) => h.includes('phone') || h.includes('தொலைபேசி')),
+    address: headers.findIndex((h) => h.includes('address') || h.includes('முகவரி')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
     allowance: headers.findIndex((h) => h.includes('allowance')),
     living: headers.findIndex((h) => h.includes('living')),
     mobility: headers.findIndex((h) => h.includes('mobility')),
@@ -773,17 +993,13 @@ export const parseElderlyFromCsv = (
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const divisionCode = (colIndex.division !== -1 ? row[colIndex.division] : row[9])?.trim() || '211';
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${Math.floor(Math.random() * 900 + 100)}`;
+    const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[9])?.trim() || defaultDivisionCode || '211').toUpperCase();
+    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
     const familyRelationship = parseRelationshipString(relRaw || 'GRANDFATHER');
 
-    let nic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[2])?.trim() || '';
-    let isProvisional = false;
-    if (!nic) {
-      nic = generateProvisionalNic(divisionCode);
-      isProvisional = true;
-    }
+    const rawNic = (colIndex.nic !== -1 ? row[colIndex.nic] : row[2])?.trim() || '';
+    const { nic, isProvisional } = ensureUniqueProvisionalNic(rawNic, divisionCode, usedNics);
 
     const nameTa = (colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[3])?.trim() || 'முதியோர் பிரஜை';
     const nameEn = (colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[4])?.trim() || nameTa;
@@ -820,7 +1036,7 @@ export const parseElderlyFromCsv = (
     if (!welfareSchemes.includes('ELDERLY')) welfareSchemes.unshift('ELDERLY');
 
     const notes = (colIndex.notes !== -1 ? row[colIndex.notes] : row[17])?.trim() || 'முதியோர் CSV பதிவு';
-    const systemId = generateSystemCitizenId(divisionCode, existingBeneficiaries.length + items.length + 1);
+    const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
     items.push({
       id: systemId,
@@ -928,7 +1144,8 @@ export const generateHistoricalPregnantMothersSampleCsv = (): string => {
 export const parsePregnantMothersFromCsv = (
   csvText: string,
   existingBeneficiaries: Beneficiary[] = [],
-  forceCompleted: boolean = false
+  forceCompleted: boolean = false,
+  defaultDivisionCode?: string
 ): {
   beneficiaries: Beneficiary[];
   pregnantMothers: PregnantMotherRecord[];
@@ -940,6 +1157,8 @@ export const parsePregnantMothersFromCsv = (
   const beneficiaries: Beneficiary[] = [];
   const pregnantMothers: PregnantMotherRecord[] = [];
   const errors: string[] = [];
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
@@ -947,7 +1166,7 @@ export const parsePregnantMothersFromCsv = (
     rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel')),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     name: headers.findIndex((h) => h.includes('name') || h.includes('பெயர்')),
-    division: headers.findIndex((h) => h.includes('division') || h.includes('பிரிவு') || h.includes('gn')),
+    division: headers.findIndex((h) => h.includes('division') || h.includes('பிரிவு') || h === 'gn'),
     phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('தொலைபேசி')),
     regDate: headers.findIndex((h) => h.includes('registration_date') || h.includes('reg') || h.includes('பதிவு')),
     completedDate: headers.findIndex((h) => h.includes('completed') || h.includes('completion') || h.includes('முடிவு')),
@@ -966,10 +1185,10 @@ export const parsePregnantMothersFromCsv = (
     // Smart column extraction with fallback to positions if headers didn't match
     const name = (colIndex.name !== -1 ? row[colIndex.name] : (colIndex.nic === 0 ? row[1] : row[3]))?.trim() || 'கர்ப்பிணித் தாய்';
     const nicRaw = (colIndex.nic !== -1 ? row[colIndex.nic] : (colIndex.name === 0 ? row[1] : row[2]))?.trim();
-    const divisionCode = (colIndex.division !== -1 ? row[colIndex.division] : row[4])?.trim() || '211';
-    const nic = nicRaw || generateProvisionalNic(divisionCode);
+    const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[4])?.trim() || defaultDivisionCode || '211').toUpperCase();
+    const { nic } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
 
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : '')?.trim().toUpperCase() || `FAM-${divisionCode}-${Math.floor(Math.random() * 900 + 100)}`;
+    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : '')?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
     const familyRelationship = parseRelationshipString(relRaw || 'MOTHER');
 
@@ -1025,7 +1244,7 @@ export const parsePregnantMothersFromCsv = (
     };
     pregnantMothers.push(motherRecord);
 
-    const systemId = generateSystemCitizenId(divisionCode, i);
+    const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + beneficiaries.length + 1);
     const resolvedMother = resolveDobAndGender(undefined, nic, 1995);
     const beneficiaryRecord: Beneficiary = {
       id: systemId,
@@ -1114,46 +1333,60 @@ export const generateDisabilitySampleCsv = (): string => {
 
 export const parseDisabilityFromCsv = (
   csvText: string,
-  existingBeneficiaries: Beneficiary[]
+  existingBeneficiaries: Beneficiary[],
+  defaultDivisionCode?: string
 ): { items: Beneficiary[]; errors: string[] } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) return { items: [], errors: ['CSV file is empty or missing data rows.'] };
 
   const items: Beneficiary[] = [];
   const errors: string[] = [];
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+
+  const colIndex = {
+    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel'),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
+    nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english')),
+    gender: headers.findIndex((h) => h.includes('gender') || h.includes('பால்')),
+    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth') || h.includes('பிறந்த')),
+    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('தொலைபேசி')),
+    address: headers.findIndex((h) => h.includes('address') || h.includes('முகவரி')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
+    nature: headers.findIndex((h) => h.includes('nature') || h.includes('type')),
+    cause: headers.findIndex((h) => h.includes('cause')),
+    illness: headers.findIndex((h) => h.includes('illness') || h.includes('chronic')),
+    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('aid')),
+    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark')),
+  };
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const [
-      familyCodeRaw,
-      relRaw,
-      nicRaw,
-      nameTaRaw,
-      nameEnRaw,
-      genderRaw,
-      dobRaw,
-      phoneRaw,
-      addressRaw,
-      divisionRaw,
-      natureRaw,
-      causeRaw,
-      illnessRaw,
-      welfareRaw,
-      notesRaw
-    ] = row;
+    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0];
+    const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
+    const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
+    const nameTaRaw = colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[3];
+    const nameEnRaw = colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[4];
+    const genderRaw = colIndex.gender !== -1 ? row[colIndex.gender] : row[5];
+    const dobRaw = colIndex.dob !== -1 ? row[colIndex.dob] : row[6];
+    const phoneRaw = colIndex.phone !== -1 ? row[colIndex.phone] : row[7];
+    const addressRaw = colIndex.address !== -1 ? row[colIndex.address] : row[8];
+    const divisionRaw = colIndex.division !== -1 ? row[colIndex.division] : row[9];
+    const natureRaw = colIndex.nature !== -1 ? row[colIndex.nature] : row[10];
+    const causeRaw = colIndex.cause !== -1 ? row[colIndex.cause] : row[11];
+    const welfareRaw = colIndex.welfare !== -1 ? row[colIndex.welfare] : row[13];
+    const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[14];
 
-    const divisionCode = divisionRaw?.trim() || '211';
-    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${Math.floor(Math.random() * 900 + 100)}`;
-    const familyRelationship = parseRelationshipString(relRaw || 'CHILD');
+    const divisionCode = (divisionRaw?.trim() || defaultDivisionCode || '211').toUpperCase();
+    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
+    const familyRelationship = parseRelationshipString(relRaw || 'OTHER');
 
-    let nic = nicRaw?.trim() || '';
-    let isProvisional = false;
-    if (!nic) {
-      nic = generateProvisionalNic(divisionCode);
-      isProvisional = true;
-    }
+    const { nic, isProvisional } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
 
     const nameTa = nameTaRaw?.trim() || 'மாற்றுத்திறனாளி பிரஜை';
     const nameEn = nameEnRaw?.trim() || nameTa;
@@ -1169,7 +1402,7 @@ export const parseDisabilityFromCsv = (
     if (!welfareSchemes.includes('DISABILITY')) welfareSchemes.unshift('DISABILITY');
 
     const notes = notesRaw?.trim() || 'அங்கவீனர் CSV பதிவு';
-    const systemId = generateSystemCitizenId(divisionCode, existingBeneficiaries.length + items.length + 1);
+    const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
     items.push({
       id: systemId,
@@ -1263,45 +1496,59 @@ export const generateAswesumaSampleCsv = (): string => {
 
 export const parseAswesumaFromCsv = (
   csvText: string,
-  existingBeneficiaries: Beneficiary[]
+  existingBeneficiaries: Beneficiary[],
+  defaultDivisionCode?: string
 ): { items: Beneficiary[]; errors: string[] } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) return { items: [], errors: ['CSV file is empty or missing data rows.'] };
 
   const items: Beneficiary[] = [];
   const errors: string[] = [];
+  const usedIds = new Set(existingBeneficiaries.map((b) => b.id).filter(Boolean));
+  const usedNics = new Set(existingBeneficiaries.map((b) => b.nic).filter(Boolean));
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+
+  const colIndex = {
+    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel'),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
+    nameEn: headers.findIndex((h) => h.includes('name_english') || h.includes('english')),
+    gender: headers.findIndex((h) => h.includes('gender') || h.includes('பால்')),
+    dob: headers.findIndex((h) => h.includes('dob') || h.includes('birth') || h.includes('பிறந்த')),
+    phone: headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('தொலைபேசி')),
+    address: headers.findIndex((h) => h.includes('address') || h.includes('முகவரி')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
+    household: headers.findIndex((h) => h.includes('household') || h.includes('வீட்டு')),
+    category: headers.findIndex((h) => h.includes('category') || h.includes('tier') || h.includes('வகை')),
+    welfare: headers.findIndex((h) => h.includes('welfare') || h.includes('aid')),
+    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark')),
+  };
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const [
-      familyCodeRaw,
-      relRaw,
-      nicRaw,
-      nameTaRaw,
-      nameEnRaw,
-      genderRaw,
-      dobRaw,
-      phoneRaw,
-      addressRaw,
-      divisionRaw,
-      householdRaw,
-      categoryRaw,
-      welfareRaw,
-      notesRaw
-    ] = row;
+    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0];
+    const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
+    const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
+    const nameTaRaw = colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[3];
+    const nameEnRaw = colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[4];
+    const genderRaw = colIndex.gender !== -1 ? row[colIndex.gender] : row[5];
+    const dobRaw = colIndex.dob !== -1 ? row[colIndex.dob] : row[6];
+    const phoneRaw = colIndex.phone !== -1 ? row[colIndex.phone] : row[7];
+    const addressRaw = colIndex.address !== -1 ? row[colIndex.address] : row[8];
+    const divisionRaw = colIndex.division !== -1 ? row[colIndex.division] : row[9];
+    const householdRaw = colIndex.household !== -1 ? row[colIndex.household] : row[10];
+    const categoryRaw = colIndex.category !== -1 ? row[colIndex.category] : row[11];
+    const welfareRaw = colIndex.welfare !== -1 ? row[colIndex.welfare] : row[12];
+    const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[13];
 
-    const divisionCode = divisionRaw?.trim() || '211';
-    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${Math.floor(Math.random() * 900 + 100)}`;
+    const divisionCode = (divisionRaw?.trim() || defaultDivisionCode || '211').toUpperCase();
+    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
     const familyRelationship = parseRelationshipString(relRaw || 'HEAD');
 
-    let nic = nicRaw?.trim() || '';
-    let isProvisional = false;
-    if (!nic) {
-      nic = generateProvisionalNic(divisionCode);
-      isProvisional = true;
-    }
+    const { nic, isProvisional } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
 
     const nameTa = nameTaRaw?.trim() || 'அஸ்வெசும பயனாளி';
     const nameEn = nameEnRaw?.trim() || nameTa;
@@ -1322,7 +1569,7 @@ export const parseAswesumaFromCsv = (
     if (!welfareSchemes.includes(primaryScheme)) welfareSchemes.unshift(primaryScheme);
 
     const notes = notesRaw?.trim() || 'அஸ்வெசும CSV பதிவு';
-    const systemId = generateSystemCitizenId(divisionCode, existingBeneficiaries.length + items.length + 1);
+    const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
     items.push({
       id: systemId,
@@ -1419,6 +1666,7 @@ export const parseAssistanceFromCsv = (
     donor?: string;
     date?: string;
     category?: AidCategory;
+    defaultDivisionCode?: string;
   }
 ): {
   validRecords: AssistanceRecord[];
@@ -1433,29 +1681,43 @@ export const parseAssistanceFromCsv = (
   const validRecords: AssistanceRecord[] = [];
   const duplicateRecords: AssistanceRecord[] = [];
   const errors: string[] = [];
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+
+  const colIndex = {
+    aidId: headers.findIndex((h) => h === 'aid_id' || h === 'id' || h.includes('aid_id')),
+    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
+    name: headers.findIndex((h) => h.includes('name') || h.includes('பெயர்')),
+    division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
+    category: headers.findIndex((h) => h.includes('category') || h.includes('வகை')),
+    desc: headers.findIndex((h) => h.includes('desc') || h.includes('விபரம்')),
+    amount: headers.findIndex((h) => h.includes('amount') || h.includes('value') || h.includes('தொகை')),
+    donor: headers.findIndex((h) => h.includes('donor') || h.includes('org') || h.includes('நன்கொடை')),
+    date: headers.findIndex((h) => h.includes('date') || h.includes('திகதி')),
+    officer: headers.findIndex((h) => h.includes('officer') || h.includes('அலுவலர்')),
+    notes: headers.findIndex((h) => h.includes('note') || h.includes('remark') || h.includes('குறிப்பு')),
+  };
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.length < 3 || !row.some((cell) => cell.trim())) continue;
 
-    const [
-      aidIdRaw,
-      familyCodeRaw,
-      nicRaw,
-      nameRaw,
-      divisionRaw,
-      categoryRaw,
-      descRaw,
-      amountRaw,
-      donorRaw,
-      dateRaw,
-      officerRaw,
-      notesRaw
-    ] = row;
+    const aidIdRaw = colIndex.aidId !== -1 ? row[colIndex.aidId] : row[0];
+    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[1];
+    const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
+    const nameRaw = colIndex.name !== -1 ? row[colIndex.name] : row[3];
+    const divisionRaw = colIndex.division !== -1 ? row[colIndex.division] : row[4];
+    const categoryRaw = colIndex.category !== -1 ? row[colIndex.category] : row[5];
+    const descRaw = colIndex.desc !== -1 ? row[colIndex.desc] : row[6];
+    const amountRaw = colIndex.amount !== -1 ? row[colIndex.amount] : row[7];
+    const donorRaw = colIndex.donor !== -1 ? row[colIndex.donor] : row[8];
+    const dateRaw = colIndex.date !== -1 ? row[colIndex.date] : row[9];
+    const officerRaw = colIndex.officer !== -1 ? row[colIndex.officer] : row[10];
+    const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[11];
 
     const familyCode = familyCodeRaw?.trim().toUpperCase() || '';
     const nic = nicRaw?.trim() || '';
-    const divisionCode = divisionRaw?.trim() || '211';
+    const divisionCode = (divisionRaw?.trim() || batchInfo?.defaultDivisionCode || '211').toUpperCase();
     const rowDate = normalizeDateString(dateRaw?.trim());
     const distributedDate = rowDate || (batchInfo?.date && batchInfo.date.trim()) || new Date().toISOString().slice(0, 10);
     
@@ -1640,7 +1902,8 @@ export const generateLandSampleCsv = (): string => {
 
 export const parseLandFromCsv = (
   csvText: string,
-  existingLand: LandRecord[] = []
+  existingLand: LandRecord[] = [],
+  defaultDivisionCode?: string
 ): { items: LandRecord[]; errors: string[] } => {
   const rows = parseCsvContent(csvText);
   if (rows.length < 2) return { items: [], errors: ['CSV file is empty or missing data rows.'] };
@@ -1675,7 +1938,7 @@ export const parseLandFromCsv = (
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const divisionCode = (colIndex.division !== -1 ? row[colIndex.division] : row[5])?.trim() || '211';
+    const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[5])?.trim() || defaultDivisionCode || '211').toUpperCase();
     const permitNo = (colIndex.permitNo !== -1 ? row[colIndex.permitNo] : row[0])?.trim() || `LDO/${divisionCode}/${new Date().getFullYear()}/${String(existingLand.length + items.length + 1).padStart(3, '0')}`;
     const lotNo = (colIndex.lotNo !== -1 ? row[colIndex.lotNo] : row[1])?.trim() || `${i}`;
     const planNo = (colIndex.planNo !== -1 ? row[colIndex.planNo] : row[2])?.trim() || `BCO/VHR/${new Date().getFullYear()}/${String(i).padStart(3, '0')}`;
