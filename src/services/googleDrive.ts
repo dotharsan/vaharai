@@ -1,4 +1,4 @@
-import { getGoogleAccessToken, invalidateGoogleAccessToken, isGoogleDriveAuthenticated } from './auth';
+import { getGoogleAccessToken, invalidateGoogleAccessToken, isGoogleDriveAuthenticated, getGoogleDriveUser } from './auth';
 import { DriveBackupItem } from '../types';
 import { parseBeneficiariesFromCsv } from './csv';
 
@@ -9,6 +9,10 @@ const STORAGE_KEYS = {
   DESIGNATED_FILE_ID: 'vaharai_ds_designated_drive_file_id',
   DESIGNATED_FILE_NAME: 'vaharai_ds_designated_drive_file_name',
   GOOGLE_SHEET_URL: 'vaharai_ds_google_sheet_url',
+  APPS_SCRIPT_RELAY_URL: 'vaharai_ds_apps_script_relay_url',
+  IS_PUBLIC_SHARED: 'vaharai_ds_drive_public_shared',
+  SHARED_WEB_LINK: 'vaharai_ds_drive_web_link',
+  OWNER_EMAIL: 'vaharai_ds_drive_owner_email',
   AUTO_SYNC_ENABLED: 'vaharai_ds_drive_auto_sync_enabled',
   LAST_DRIVE_SYNC: 'vaharai_ds_last_drive_sync_meta',
 };
@@ -20,7 +24,21 @@ export interface DriveSyncStatus {
   fileName?: string;
   webViewLink?: string;
   sheetUrl?: string;
+  relayUrl?: string;
+  ownerEmail?: string;
+  isPubliclyReadable?: boolean;
   message?: string;
+}
+
+export interface SharedDriveConfigPayload {
+  fileId: string;
+  fileName: string;
+  webViewLink?: string;
+  sheetUrl?: string;
+  relayUrl?: string;
+  ownerEmail?: string;
+  isPubliclyReadable?: boolean;
+  updatedAt?: string;
 }
 
 let currentSyncStatus: DriveSyncStatus = {
@@ -36,7 +54,15 @@ export const getDriveSyncStatus = (): DriveSyncStatus => {
     if (savedMeta) {
       try {
         const parsed = JSON.parse(savedMeta);
-        return { ...currentSyncStatus, ...parsed };
+        return {
+          ...currentSyncStatus,
+          ...parsed,
+          fileId: getDesignatedDriveFileId(),
+          fileName: getDesignatedDriveFileName(),
+          sheetUrl: getGoogleSheetUrl(),
+          relayUrl: getAppsScriptRelayUrl(),
+          isPubliclyReadable: isDriveFilePubliclyShared(),
+        };
       } catch {
         // ignore
       }
@@ -47,7 +73,7 @@ export const getDriveSyncStatus = (): DriveSyncStatus => {
 
 const notifyStatusChange = (status: Partial<DriveSyncStatus>) => {
   currentSyncStatus = { ...currentSyncStatus, ...status };
-  if (typeof window !== 'undefined' && (status.lastSyncedAt || status.state === 'error' || status.fileId)) {
+  if (typeof window !== 'undefined' && (status.lastSyncedAt || status.state === 'error' || status.fileId || status.isPubliclyReadable !== undefined)) {
     try {
       localStorage.setItem(STORAGE_KEYS.LAST_DRIVE_SYNC, JSON.stringify(currentSyncStatus));
     } catch {
@@ -106,7 +132,44 @@ export const getDesignatedDriveFileName = (): string => {
   return 'vaharai_ds_master_database.json';
 };
 
-export const setDesignatedDriveFileId = (idOrUrl: string, customName?: string): string => {
+export const isDriveFilePubliclyShared = (): boolean => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(STORAGE_KEYS.IS_PUBLIC_SHARED) === 'true';
+  }
+  return false;
+};
+
+export const setDriveFilePubliclyShared = (val: boolean): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEYS.IS_PUBLIC_SHARED, String(val));
+  }
+  notifyStatusChange({ isPubliclyReadable: val });
+};
+
+export const getAppsScriptRelayUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL) || '';
+  }
+  return '';
+};
+
+export const setAppsScriptRelayUrl = (url: string, syncServer: boolean = true): string => {
+  const clean = url.trim();
+  if (typeof window !== 'undefined') {
+    if (clean) {
+      localStorage.setItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL, clean);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL);
+    }
+  }
+  notifyStatusChange({ relayUrl: clean });
+  if (syncServer) {
+    void pushSharedDriveConfigToServer({ relayUrl: clean });
+  }
+  return clean;
+};
+
+export const setDesignatedDriveFileId = (idOrUrl: string, customName?: string, syncServer: boolean = true): string => {
   const extracted = extractDriveFileId(idOrUrl);
   if (typeof window !== 'undefined') {
     localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_ID, extracted);
@@ -115,6 +178,12 @@ export const setDesignatedDriveFileId = (idOrUrl: string, customName?: string): 
     }
   }
   notifyStatusChange({ fileId: extracted, ...(customName ? { fileName: customName } : {}) });
+  if (syncServer) {
+    void pushSharedDriveConfigToServer({
+      fileId: extracted,
+      ...(customName ? { fileName: customName } : {}),
+    });
+  }
   return extracted;
 };
 
@@ -143,7 +212,7 @@ export const getGoogleSheetUrl = (): string => {
   return '';
 };
 
-export const setGoogleSheetUrl = (url: string): string => {
+export const setGoogleSheetUrl = (url: string, syncServer: boolean = true): string => {
   const clean = url.trim();
   if (typeof window !== 'undefined') {
     if (clean) {
@@ -153,7 +222,101 @@ export const setGoogleSheetUrl = (url: string): string => {
     }
   }
   notifyStatusChange({ sheetUrl: clean });
+  if (syncServer) {
+    void pushSharedDriveConfigToServer({ sheetUrl: clean });
+  }
   return clean;
+};
+
+export const getCurrentSharedDriveConfig = (): SharedDriveConfigPayload => {
+  const owner = getGoogleDriveUser();
+  return {
+    fileId: getDesignatedDriveFileId(),
+    fileName: getDesignatedDriveFileName(),
+    webViewLink: (typeof window !== 'undefined' && localStorage.getItem(STORAGE_KEYS.SHARED_WEB_LINK)) || `https://drive.google.com/file/d/${getDesignatedDriveFileId()}/view`,
+    sheetUrl: getGoogleSheetUrl(),
+    relayUrl: getAppsScriptRelayUrl(),
+    ownerEmail: owner?.email || (typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.OWNER_EMAIL) || '' : ''),
+    isPubliclyReadable: isDriveFilePubliclyShared(),
+  };
+};
+
+export const applySharedDriveConfigLocally = (config: Partial<SharedDriveConfigPayload> | null | undefined) => {
+  if (!config || typeof window === 'undefined') return;
+  if (typeof config.fileId === 'string' && config.fileId.trim()) {
+    localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_ID, config.fileId.trim());
+  }
+  if (typeof config.fileName === 'string' && config.fileName.trim()) {
+    localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_NAME, config.fileName.trim());
+  }
+  if (typeof config.webViewLink === 'string' && config.webViewLink.trim()) {
+    localStorage.setItem(STORAGE_KEYS.SHARED_WEB_LINK, config.webViewLink.trim());
+  }
+  if (typeof config.sheetUrl === 'string') {
+    if (config.sheetUrl.trim()) {
+      localStorage.setItem(STORAGE_KEYS.GOOGLE_SHEET_URL, config.sheetUrl.trim());
+    }
+  }
+  if (typeof config.relayUrl === 'string') {
+    if (config.relayUrl.trim()) {
+      localStorage.setItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL, config.relayUrl.trim());
+    }
+  }
+  if (typeof config.ownerEmail === 'string' && config.ownerEmail.trim()) {
+    localStorage.setItem(STORAGE_KEYS.OWNER_EMAIL, config.ownerEmail.trim());
+  }
+  if (typeof config.isPubliclyReadable === 'boolean') {
+    localStorage.setItem(STORAGE_KEYS.IS_PUBLIC_SHARED, String(config.isPubliclyReadable));
+  }
+  notifyStatusChange({
+    fileId: config.fileId || getDesignatedDriveFileId(),
+    fileName: config.fileName || getDesignatedDriveFileName(),
+    ...(config.webViewLink ? { webViewLink: config.webViewLink } : {}),
+    ...(config.sheetUrl !== undefined ? { sheetUrl: config.sheetUrl } : {}),
+    ...(config.relayUrl !== undefined ? { relayUrl: config.relayUrl } : {}),
+    ...(config.ownerEmail ? { ownerEmail: config.ownerEmail } : {}),
+    ...(config.isPubliclyReadable !== undefined ? { isPubliclyReadable: config.isPubliclyReadable } : {}),
+  });
+};
+
+export const fetchSharedDriveConfigFromServer = async (): Promise<SharedDriveConfigPayload | null> => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const res = await fetch('/api/drive/shared-config');
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (body?.success && body?.config) {
+      applySharedDriveConfigLocally(body.config);
+      return body.config as SharedDriveConfigPayload;
+    }
+  } catch {
+    // ignore offline/static mode
+  }
+  return null;
+};
+
+export const pushSharedDriveConfigToServer = async (partial?: Partial<SharedDriveConfigPayload>): Promise<SharedDriveConfigPayload | null> => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const payload = {
+      ...getCurrentSharedDriveConfig(),
+      ...(partial || {}),
+    };
+    const res = await fetch('/api/drive/shared-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    if (body?.success && body?.config) {
+      applySharedDriveConfigLocally(body.config);
+      return body.config as SharedDriveConfigPayload;
+    }
+  } catch {
+    // ignore offline/static mode
+  }
+  return null;
 };
 
 const safeParseDriveJsonText = (rawText: string): any | null => {
@@ -163,8 +326,9 @@ const safeParseDriveJsonText = (rawText: string): any | null => {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed && (Array.isArray(parsed.beneficiaries) || Array.isArray(parsed.users) || Array.isArray(parsed.divisions))) {
-      return parsed;
+    const data = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+    if (data && (Array.isArray(data.beneficiaries) || Array.isArray(data.users) || Array.isArray(data.divisions))) {
+      return data;
     }
     return null;
   } catch {
@@ -173,16 +337,90 @@ const safeParseDriveJsonText = (rawText: string): any | null => {
 };
 
 /**
- * Fetch and parse data from Google Drive file or Google Sheet via Server Proxy
+ * Make the designated Google Drive file readable by Anyone with the link (all staff workstations).
+ * Must ONLY be called after explicit user confirmation in UI.
+ */
+export const shareDriveFileWithEveryone = async (
+  customFileId?: string
+): Promise<{ success: boolean; fileId: string; webViewLink?: string }> => {
+  const token = getGoogleAccessToken();
+  if (!token) {
+    throw new Error('Google Drive is not authenticated. Please connect Google Drive first.');
+  }
+
+  const fileId = customFileId || getDesignatedDriveFileId();
+  const permResp = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      role: 'reader',
+      type: 'anyone',
+    }),
+  });
+
+  if (permResp.status === 401) {
+    invalidateGoogleAccessToken();
+    throw new Error('Google Drive session expired. Please reconnect Google Drive.');
+  }
+
+  if (!permResp.ok) {
+    const errText = await permResp.text();
+    throw new Error(`Sharing failed (${permResp.status}): ${errText}`);
+  }
+
+  let webViewLink = `https://drive.google.com/file/d/${fileId}/view?usp=sharing`;
+  let fileName = getDesignatedDriveFileName();
+  try {
+    const metaResp = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,webViewLink,shared`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (metaResp.ok) {
+      const meta = await metaResp.json();
+      if (meta.webViewLink) webViewLink = meta.webViewLink;
+      if (meta.name) fileName = meta.name;
+    }
+  } catch {
+    // ignore metadata warning
+  }
+
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEYS.SHARED_WEB_LINK, webViewLink);
+  }
+  setDriveFilePubliclyShared(true);
+  await pushSharedDriveConfigToServer({
+    fileId,
+    fileName,
+    webViewLink,
+    isPubliclyReadable: true,
+    ownerEmail: getGoogleDriveUser()?.email || '',
+  });
+
+  notifyStatusChange({
+    fileId,
+    fileName,
+    webViewLink,
+    isPubliclyReadable: true,
+    message: 'கோப்பு அனைவரும் பயன்படுத்தும்படி பகிரப்பட்டது (Shared with Anyone)!',
+  });
+
+  return { success: true, fileId, webViewLink };
+};
+
+/**
+ * Fetch and parse data from Google Drive file, Apps Script Relay, or Google Sheet via Server Proxy
  */
 export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any | null> => {
   const sheetUrl = getGoogleSheetUrl();
+  const relayUrl = getAppsScriptRelayUrl();
   const fileId = targetIdOrUrl ? extractDriveFileId(targetIdOrUrl) : getDesignatedDriveFileId();
   const queryParam = targetIdOrUrl && targetIdOrUrl.includes('spreadsheets')
     ? `url=${encodeURIComponent(targetIdOrUrl)}`
     : sheetUrl
     ? `url=${encodeURIComponent(sheetUrl)}`
-    : `fileId=${encodeURIComponent(fileId)}`;
+    : `fileId=${encodeURIComponent(fileId)}${relayUrl ? `&relayUrl=${encodeURIComponent(relayUrl)}` : ''}`;
 
   try {
     const response = await fetch(`/api/drive/fetch?${queryParam}`);
@@ -190,7 +428,7 @@ export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any |
     const result = await response.json();
 
     if (result.success) {
-      if (result.type === 'json' && result.data && Array.isArray(result.data.beneficiaries)) {
+      if (result.type === 'json' && result.data && (Array.isArray(result.data.beneficiaries) || Array.isArray(result.data.users))) {
         return result.data;
       }
 
@@ -214,12 +452,30 @@ export const fetchFromCloudProxy = async (targetIdOrUrl?: string): Promise<any |
 };
 
 /**
+ * Fetch directly from a configured Google Apps Script Relay URL (works even on static hosts without backend).
+ */
+const fetchFromAppsScriptRelay = async (fileId: string): Promise<any | null> => {
+  const relayUrl = getAppsScriptRelayUrl();
+  if (!relayUrl || !relayUrl.startsWith('https://script.google.com/')) return null;
+  try {
+    const sep = relayUrl.includes('?') ? '&' : '?';
+    const resp = await fetch(`${relayUrl}${sep}fileId=${encodeURIComponent(fileId)}`);
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    return safeParseDriveJsonText(text);
+  } catch (err) {
+    console.warn('[Apps Script Relay] Direct fetch error:', err);
+    return null;
+  }
+};
+
+/**
  * Fetch and parse data from the designated Google Drive file or Google Sheet.
- * Automatically tries authenticated Drive API first if connected, then falls back to server proxy.
+ * Automatically tries authenticated Drive API first if connected, then Apps Script Relay, then Server Proxy.
  */
 export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promise<any | null> => {
   const fileId = customFileId || getDesignatedDriveFileId();
-  notifyStatusChange({ state: 'syncing', fileId, message: 'டிரைவ் / கூகிள் சீட்டிலிருந்து வாசிக்கப்படுகிறது...' });
+  notifyStatusChange({ state: 'syncing', fileId, message: 'கூகிள் டிரைவ் சேமிப்பகத்திலிருந்து வாசிக்கப்படுகிறது...' });
 
   // Step 1: Authenticated Drive API if user is connected (supports private user Drive files)
   const token = getGoogleAccessToken();
@@ -250,15 +506,14 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
             state: 'synced',
             fileId,
             lastSyncedAt: new Date().toISOString(),
-            message: 'டிரைவ் கோப்பிலிருந்து தரவுகள் வெற்றிகரமாக பெறப்பட்டன.',
+            message: 'கூகிள் டிரைவ் கோப்பிலிருந்து தரவுகள் வெற்றிகரமாக பெறப்பட்டன.',
           });
           return data;
         }
-        // Empty / malformed placeholder file like "{ [ ] }" in user's Drive
         notifyStatusChange({
           state: 'idle',
           fileId,
-          message: 'குறிக்கப்பட்ட டிரைவ் கோப்பு தற்போது காலியாக உள்ளது — உங்கள் தரவை அதில் சேமிக்கலாம்.',
+          message: 'குறிக்கப்பட்ட டிரைவ் கோப்பு தற்போது காலியாக உள்ளது — காலியான தரவுத்தளத்தை சேமிக்கலாம்.',
         });
         return null;
       }
@@ -267,7 +522,19 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
     }
   }
 
-  // Step 2: Server Proxy for public Google Sheet or shared Drive file (only if custom sheet or explicit read)
+  // Step 2: Direct Apps Script Relay (if configured by owner, works on ALL browsers & static hosts)
+  const relayData = await fetchFromAppsScriptRelay(fileId);
+  if (relayData) {
+    notifyStatusChange({
+      state: 'synced',
+      fileId,
+      lastSyncedAt: new Date().toISOString(),
+      message: 'பகிரப்பட்ட கூகிள் டிரைவ் ரிலே மூலம் தரவு பெறப்பட்டது.',
+    });
+    return relayData;
+  }
+
+  // Step 3: Server Proxy for shared public Drive file or Google Sheet
   try {
     const proxyData = await fetchFromCloudProxy(customFileId);
     if (proxyData && (Array.isArray(proxyData.beneficiaries) || Array.isArray(proxyData.users))) {
@@ -275,7 +542,7 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
         state: 'synced',
         fileId,
         lastSyncedAt: new Date().toISOString(),
-        message: 'டிரைவ் / கூகிள் சீட்டிலிருந்து தரவுகள் தானாக வெற்றிகரமாக பெறப்பட்டது.',
+        message: 'பகிரப்பட்ட கூகிள் டிரைவிலிருந்து தரவுகள் வெற்றிகரமாக பெறப்பட்டன.',
       });
       return proxyData;
     }
@@ -286,21 +553,52 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
   notifyStatusChange({
     state: 'idle',
     fileId,
-    message: 'டிரைவ் கோப்பு தயார் நிலையில் உள்ளது.',
+    message: 'கூகிள் டிரைவ் சேமிப்பகம் தயார் நிலையில் உள்ளது.',
   });
   return null;
 };
 
 /**
  * Saves/updates data directly into the designated Google Drive file.
- * Uses PATCH media to update in-place without creating duplicate files.
- * Verifies returned Drive metadata and handles expired 401 tokens or read-only 403/404 targets.
+ * Uses PATCH media to update in-place, falls back to creating writable file on 403/404,
+ * or pushes via shared Apps Script Relay when configured for non-authenticated staff browsers.
  */
 export const saveToDesignatedDriveFile = async (
   snapshotData: any,
   customFileId?: string
 ): Promise<{ success: boolean; fileId: string; fileName: string; webViewLink?: string; timestamp: string }> => {
   const token = getGoogleAccessToken();
+  const relayUrl = getAppsScriptRelayUrl();
+  let fileId = customFileId || getDesignatedDriveFileId();
+
+  // Fallback write via Shared Google Apps Script Relay for workstations without Google Login
+  if (!token && relayUrl && relayUrl.startsWith('https://script.google.com/')) {
+    notifyStatusChange({ state: 'syncing', fileId, message: 'பகிரப்பட்ட டிரைவ் ரிலே மூலம் சேமிக்கப்படுகிறது...' });
+    const resp = await fetch(relayUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ fileId, data: snapshotData }),
+    });
+    if (!resp.ok) {
+      throw new Error(`Shared Drive Relay save failed (${resp.status})`);
+    }
+    const now = new Date().toISOString();
+    const fileName = getDesignatedDriveFileName();
+    notifyStatusChange({
+      state: 'synced',
+      fileId,
+      fileName,
+      lastSyncedAt: now,
+      message: `பகிரப்பட்ட கூகிள் டிரைவ் கோப்பில் (${fileName}) சேமிக்கப்பட்டது!`,
+    });
+    return {
+      success: true,
+      fileId,
+      fileName,
+      timestamp: now,
+    };
+  }
+
   if (!token) {
     notifyStatusChange({
       state: 'error',
@@ -309,13 +607,11 @@ export const saveToDesignatedDriveFile = async (
     throw new Error('Google Drive is not authenticated. Please connect Google Drive first.');
   }
 
-  let fileId = customFileId || getDesignatedDriveFileId();
   notifyStatusChange({ state: 'syncing', fileId, message: 'டிரைவ் கோப்பில் சேமிக்கப்படுகிறது...' });
 
   const fileContent = JSON.stringify(snapshotData, null, 2);
 
   try {
-    // Attempt 1: In-place PATCH update of the designated file (asks Drive to return id, name, webViewLink)
     const patchUrl = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,name,webViewLink,size`;
     const response = await fetch(patchUrl, {
       method: 'PATCH',
@@ -343,6 +639,16 @@ export const saveToDesignatedDriveFile = async (
       if (typeof window !== 'undefined' && savedMeta.name) {
         localStorage.setItem(STORAGE_KEYS.DESIGNATED_FILE_NAME, savedMeta.name);
       }
+      if (typeof window !== 'undefined' && savedMeta.webViewLink) {
+        localStorage.setItem(STORAGE_KEYS.SHARED_WEB_LINK, savedMeta.webViewLink);
+      }
+
+      void pushSharedDriveConfigToServer({
+        fileId: actualFileId,
+        fileName: actualFileName,
+        ...(savedMeta.webViewLink ? { webViewLink: savedMeta.webViewLink } : {}),
+        ownerEmail: getGoogleDriveUser()?.email || '',
+      });
 
       const now = new Date().toISOString();
       notifyStatusChange({
@@ -363,11 +669,11 @@ export const saveToDesignatedDriveFile = async (
     }
 
     // If 404 (not in this user's Drive) or 403 (read-only shared file such as default template),
-    // create a writable master JSON file in the user's own Drive and set it as designated
+    // create a writable master JSON file in the user's own Drive and publish its File ID to shared-config
     if (response.status === 404 || response.status === 403) {
       console.warn(`Target file ${fileId} not writable or not found (${response.status}). Creating writable master file in user's Drive...`);
       const newBackup = await uploadBackupToDrive(snapshotData, 'vaharai_ds_master_central_database.json');
-      setDesignatedDriveFileId(newBackup.id, newBackup.name);
+      setDesignatedDriveFileId(newBackup.id, newBackup.name, true);
       fileId = newBackup.id;
 
       const now = new Date().toISOString();
@@ -399,14 +705,14 @@ export const saveToDesignatedDriveFile = async (
 };
 
 /**
- * Debounced Auto-Drive Sync scheduler (runs when user has enabled Auto-Sync & is authenticated)
+ * Debounced Auto-Drive Sync scheduler (runs when user has enabled Auto-Sync & is authenticated or Relay URL is configured)
  */
 let driveAutoSyncTimer: any = null;
 
 export const scheduleAutoDriveSync = (snapshotData?: any) => {
   if (typeof window === 'undefined') return;
   if (!isDriveAutoSyncEnabled()) return;
-  if (!isGoogleDriveAuthenticated()) return;
+  if (!isGoogleDriveAuthenticated() && !getAppsScriptRelayUrl()) return;
 
   if (driveAutoSyncTimer) clearTimeout(driveAutoSyncTimer);
 

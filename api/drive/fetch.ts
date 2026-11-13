@@ -1,12 +1,11 @@
-import fs from 'fs';
-import path from 'path';
+import { readSharedDriveConfig } from './shared-config.ts';
 
 /**
- * Serverless / Express proxy endpoint for fetching Google Drive files & Google Sheets
- * Resolves CORS limitations and provides automatic fallback to local central database.
+ * Serverless / Express proxy endpoint for fetching Google Drive files, Google Sheets,
+ * or Google Apps Script shared relay endpoints.
+ * Resolves CORS limitations for all workstations without requiring per-user Google login.
  */
 export default async function handler(req: any, res: any) {
-  // Permissive CORS for Vercel, Express, and client cross-origin calls
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -15,31 +14,10 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
+  const sharedConfig = readSharedDriveConfig();
   const fileIdParam = (req.query?.fileId || req.body?.fileId || '').toString().trim();
   const urlParam = (req.query?.url || req.body?.url || '').toString().trim();
-
-  // Helper to read local central database as fallback
-  const getLocalDatabase = () => {
-    try {
-      const cwd = process.cwd();
-      const candidates = [
-        path.join(cwd, 'data', 'central_database.json'),
-        path.join(cwd, 'src', 'data', 'central_database.json'),
-      ];
-      for (const p of candidates) {
-        if (fs.existsSync(p)) {
-          const raw = fs.readFileSync(p, 'utf-8');
-          const parsed = JSON.parse(raw);
-          if (parsed && Array.isArray(parsed.beneficiaries)) {
-            return parsed;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[drive/fetch] Local disk read warning:', e);
-    }
-    return null;
-  };
+  const relayUrlParam = (req.query?.relayUrl || req.body?.relayUrl || sharedConfig.relayUrl || '').toString().trim();
 
   // Case 1: Google Sheets URL provided
   if (urlParam && urlParam.includes('spreadsheets')) {
@@ -79,17 +57,49 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  // Default fallback file ID if none provided
+  // Fallback to shared config file ID (which itself defaults to 1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2)
   if (!effectiveFileId) {
-    effectiveFileId = '1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2';
+    effectiveFileId = sharedConfig.fileId || '1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2';
   }
 
-  // Attempt to fetch from Google Drive direct download URL
+  // Case 2: Try shared Google Apps Script Relay URL first if configured
+  if (relayUrlParam && relayUrlParam.startsWith('https://script.google.com/')) {
+    try {
+      const separator = relayUrlParam.includes('?') ? '&' : '?';
+      const relayResp = await fetch(`${relayUrlParam}${separator}fileId=${encodeURIComponent(effectiveFileId)}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      });
+      if (relayResp.ok) {
+        const text = await relayResp.text();
+        const trimmed = text.trim();
+        if (!/^<(!doctype|html)/i.test(trimmed)) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            const payload = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+            if (payload && (Array.isArray(payload.beneficiaries) || Array.isArray(payload.users) || Array.isArray(payload.divisions))) {
+              return res.status(200).json({
+                success: true,
+                type: 'json',
+                data: payload,
+                source: 'google_apps_script_relay',
+              });
+            }
+          } catch {
+            // continue to direct Drive download fallback
+          }
+        }
+      }
+    } catch (relayErr) {
+      console.warn('[drive/fetch] Apps Script relay warning:', relayErr);
+    }
+  }
+
+  // Case 3: Attempt to fetch from Google Drive direct public download URL
   try {
     const downloadUrls = [
       `https://drive.google.com/uc?export=download&id=${effectiveFileId}`,
+      `https://drive.usercontent.google.com/download?id=${effectiveFileId}&export=download&confirm=t`,
       `https://docs.google.com/uc?export=download&id=${effectiveFileId}`,
-      `https://drive.usercontent.google.com/download?id=${effectiveFileId}&export=download`,
     ];
 
     for (const dlUrl of downloadUrls) {
@@ -105,10 +115,20 @@ export default async function handler(req: any, res: any) {
           if (/^<(!doctype|html)/i.test(trimmed)) {
             continue;
           }
-          // Check if response is valid non-empty JSON snapshot
+          // Detect empty placeholder file such as "" or "{}" or "{\n [\n ]\n}"
+          if (!trimmed || trimmed === '{}' || trimmed === '[]' || /^\{\s*\[\s*\]\s*\}$/.test(trimmed)) {
+            return res.status(200).json({
+              success: true,
+              type: 'empty_placeholder',
+              fileId: effectiveFileId,
+              message: 'Google Drive file is accessible and currently empty.',
+              source: 'google_drive_direct',
+            });
+          }
+
           try {
             const data = JSON.parse(trimmed);
-            if (data && (Array.isArray(data.beneficiaries) || Array.isArray(data.users))) {
+            if (data && (Array.isArray(data.beneficiaries) || Array.isArray(data.users) || Array.isArray(data.divisions))) {
               return res.status(200).json({
                 success: true,
                 type: 'json',
@@ -117,7 +137,6 @@ export default async function handler(req: any, res: any) {
               });
             }
           } catch {
-            // Ignore malformed placeholder content such as "{\n [\n ]\n}"
             const looksLikeBrokenJson = trimmed.startsWith('{') || trimmed.startsWith('[');
             if (!looksLikeBrokenJson && (trimmed.includes(',') || trimmed.includes('\n'))) {
               return res.status(200).json({
@@ -137,10 +156,10 @@ export default async function handler(req: any, res: any) {
     console.warn('[drive/fetch] Google Drive fetch attempt error:', driveErr);
   }
 
-  // Do not pretend static seed database is remote Google Drive data
   return res.status(200).json({
     success: false,
-    message: 'Google Drive file is not publicly readable or is empty. Authenticate via Google Drive in Settings.',
+    fileId: effectiveFileId,
+    message: 'Google Drive file is not publicly readable or is empty. Connect Drive and share file with Anyone with link.',
     source: 'drive_unavailable',
   });
 }

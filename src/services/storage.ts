@@ -23,7 +23,12 @@ import {
 } from '../types';
 import initialDatabaseSeed from '../data/central_database.json';
 import { isGoogleDriveAuthenticated } from './auth';
-import { scheduleAutoDriveSync, getDesignatedDriveFileId, getDesignatedDriveFileName } from './googleDrive';
+import {
+  scheduleAutoDriveSync,
+  getDesignatedDriveFileId,
+  getDesignatedDriveFileName,
+  getCurrentSharedDriveConfig,
+} from './googleDrive';
 import { parseSriLankanNic } from '../utils/nicParser';
 
 const STORAGE_KEYS = {
@@ -102,8 +107,29 @@ export const removeDeletedId = (id?: string, nic?: string) => {
   }
 };
 
-// Purge legacy mock data cache from previous versions so users see a completely fresh registration portal
-if (typeof window !== 'undefined') {
+const CLEAN_DRIVE_MODE_FLAG = 'vaharai_ds_clean_drive_mode_v4';
+const LAST_CLEAR_AT_KEY = 'vaharai_ds_last_clear_at';
+let needsInitialIdbWipe = false;
+
+export const getLastClearAt = (): string => {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(LAST_CLEAR_AT_KEY) || '';
+};
+
+export const setLastClearAt = (iso?: string): string => {
+  const val = iso || new Date().toISOString();
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(LAST_CLEAR_AT_KEY, val);
+    } catch {
+      // ignore
+    }
+  }
+  return val;
+};
+
+// One-time clean storage wipe: removes all legacy/seed cached records so Google Drive becomes clean shared storage with 0 beneficiaries
+if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
   try {
     const legacyKeys = [
       'vaharai_ds_users_v4',
@@ -114,6 +140,29 @@ if (typeof window !== 'undefined') {
       'vaharai_ds_initialized_v4',
     ];
     legacyKeys.forEach((k) => localStorage.removeItem(k));
+
+    if (localStorage.getItem(CLEAN_DRIVE_MODE_FLAG) !== 'true') {
+      const keepDriveKeys = new Set([
+        'vaharai_ds_designated_drive_file_id',
+        'vaharai_ds_designated_drive_file_name',
+        'vaharai_ds_google_sheet_url',
+        'vaharai_ds_apps_script_relay_url',
+        'vaharai_ds_drive_public_shared',
+        'vaharai_ds_drive_web_link',
+        'vaharai_ds_drive_owner_email',
+        'vaharai_ds_drive_auto_sync_enabled',
+        'vaharai_ds_drive_user',
+      ]);
+      Object.keys(localStorage).forEach((k) => {
+        if (k.startsWith('vaharai_ds_') && !keepDriveKeys.has(k)) {
+          localStorage.removeItem(k);
+        }
+      });
+      localStorage.setItem(CLEAN_DRIVE_MODE_FLAG, 'true');
+      localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
+      localStorage.setItem(LAST_CLEAR_AT_KEY, '2026-11-13T09:00:00.000Z');
+      needsInitialIdbWipe = true;
+    }
   } catch {
     // ignore
   }
@@ -603,7 +652,34 @@ const idbPut = async (key: string, value: any): Promise<boolean> => {
   });
 };
 
+export const clearIndexedDbStore = async (): Promise<void> => {
+  const db = await openIdb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).clear();
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+};
+
 export const hydrateStorageFromIndexedDb = async (): Promise<boolean> => {
+  if (needsInitialIdbWipe) {
+    needsInitialIdbWipe = false;
+    await clearIndexedDbStore();
+    return false;
+  }
   const db = await openIdb();
   if (!db) return false;
   return new Promise((resolve) => {
@@ -1020,60 +1096,7 @@ export const saveServices = (services: ServiceDefinition[], sync: boolean = true
 };
 
 // ================= LAND BRANCH DATA STORE (Requirement 05) ================= //
-export const DEFAULT_LAND_RECORDS: LandRecord[] = [
-  {
-    id: 'LND-211-2026-001',
-    permitNo: 'LDO/211/2024/042',
-    lotNo: '14-B',
-    planNo: 'BCO/VHR/2023/118',
-    extent: '0A-1R-20P',
-    landType: 'CROWN_PERMIT',
-    divisionCode: '211',
-    ownerNic: '741239845V',
-    ownerNameTa: 'கணபதிப்பிள்ளை சிவலிங்கம்',
-    ownerNameEn: 'Kanapathipillai Sivalingam',
-    ownerPhone: '0771234567',
-    familyCode: 'FAM-211-001',
-    permitStatus: 'PERMIT_ISSUED',
-    issueDate: '2024-05-12',
-    annualTaxStatus: 'PAID',
-    boundaries: {
-      north: 'வீதி (Public Road)',
-      south: 'முருகேசு காணி (Murugesu Land)',
-      east: 'வாய்க்கால் (Canal)',
-      west: 'அரச காணி (Crown Land)',
-    },
-    notes: 'அரச காணி அனுமதிப்பத்திரம் ஒழுங்காக புதுப்பிக்கப்பட்டுள்ளது.',
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  },
-  {
-    id: 'LND-211A-2026-002',
-    permitNo: 'LDO/211A/2025/089',
-    lotNo: '28',
-    planNo: 'BCO/VHR/2024/204',
-    extent: '1A-0R-00P',
-    landType: 'AGRICULTURAL',
-    divisionCode: '211A',
-    ownerNic: '891902697V',
-    ownerNameTa: 'சின்னப்பு விஜயகுமார்',
-    ownerNameEn: 'Sinnappu Vijayakumar',
-    ownerPhone: '0760539158',
-    familyCode: 'FAM-211-042',
-    permitStatus: 'PENDING_APPROVAL',
-    issueDate: '2025-08-19',
-    annualTaxStatus: 'DUE',
-    boundaries: {
-      north: 'காயான்கேணி வீதி (Kayankerni Road)',
-      south: 'வயல் வெளி (Paddy Field)',
-      east: 'அரச காணி (State Land)',
-      west: 'தவராசா காணி (Thavarasa Land)',
-    },
-    notes: 'அனுமதிப்பத்திர எல்லை மீளளவீடு செய்யப்பட வேண்டும்.',
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  },
-];
+export const DEFAULT_LAND_RECORDS: LandRecord[] = [];
 
 export const loadLandRecords = (): LandRecord[] => {
   return getStoredData<LandRecord[]>(STORAGE_KEYS.LAND_RECORDS, DEFAULT_LAND_RECORDS);
@@ -1122,97 +1145,7 @@ export const resetPovertyWeights = (): PovertyScoringWeights => {
   return DEFAULT_POVERTY_WEIGHTS;
 };
 
-export const DEFAULT_HOUSEHOLDS: HouseholdData[] = [
-  {
-    id: 'HH-5-1-03-01-010-00435',
-    familyCode: 'FAM-211-042',
-    householdReference: 'HH-5-1-03-01-010-00435',
-    applicationReference: '20250515-4622119',
-    applicantNameTa: 'சின்னப்பு விஜயகுமார்',
-    applicantNameEn: 'SINNAPPU VIJAYAKUMAR',
-    applicantNic: '891902697V',
-    phone: '0760539158',
-    address: 'SELVAPURAM KAYANKERNI',
-    divisionCode: '211A',
-    status: 'DS_ENDORSED',
-    selectedCategory: 'VULNERABLE',
-    objectionsStatus: 'OC-08-10-2025-69523 [Completed]',
-    bankDetails: {
-      bankName: 'Peoples Bank',
-      branch: 'Valaichchenai',
-      accountNumber: '208390058609',
-      accountName: 'SINNAPPU VIJAYAKUMAR 891902697V',
-      status: 'VERIFIED',
-    },
-    commonAssets: {
-      ownsLand: false,
-      landExtent: 'NONE',
-      ownsOtherLand: false,
-      otherLandExtent: 'NONE',
-      vehicleType: 'NONE',
-      machineryType: 'NONE',
-      livestockType: 'GOATS',
-      livestockCount: 3,
-      expenses: {
-        food: 18000,
-        water: 500,
-        clothing: 2000,
-        medical: 4000,
-        rent: 0,
-        transport: 1500,
-        electricity: 1200,
-        fuelGas: 2500,
-        telecom: 1000,
-        education: 1500,
-        religiousLeisure: 500,
-        loansDebt: 3000,
-        total: 35700,
-      },
-      income: {
-        unstableSources: 12000,
-        salary: 0,
-        business: 0,
-        agriculture: 4000,
-        rent: 0,
-        pension: 0,
-        samurdhi: 2500,
-        elderlyAid: 0,
-        disabilityAid: 0,
-        ckdAid: 0,
-        foreignRemittance: 0,
-        localRemittance: 0,
-        otherGovAid: 0,
-        other: 0,
-        total: 18500,
-      },
-      electricityUnitsKwh: 28,
-      unitType: 'SINGLE_1_STORY',
-      floorMaterial: 'CLAY',
-      roofMaterial: 'THATCH_PALM',
-      wallMaterial: 'CLAY_MUD',
-      houseArea: 'LESS_THAN_500_SQFT',
-      ownsCurrentHouse: false,
-      ownsOtherHouse: false,
-      lightingSource: 'KEROSENE',
-      waterSource: 'UNPROTECTED_WELL',
-      toiletLocation: 'OPEN_DEFECATION',
-      toiletNature: 'NO_TOILET',
-      isSingleParent: false,
-    },
-    totalMembersCount: 4,
-    familyQrPayload: 'VHR-FAMILY|FAM:FAM-211-042|DIV:211A|UID:FAM-211-042-SEED',
-    score100: 88,
-    priorityRank: 1,
-    scoreBreakdown: {
-      housingScore: 25,
-      sanitationScore: 20,
-      demographicsScore: 18,
-      economicScore: 25,
-    },
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  },
-];
+export const DEFAULT_HOUSEHOLDS: HouseholdData[] = [];
 
 export const loadHouseholds = (): HouseholdData[] => {
   return getStoredData<HouseholdData[]>(STORAGE_KEYS.HOUSEHOLDS, DEFAULT_HOUSEHOLDS);
@@ -1246,114 +1179,7 @@ export const clearAllHouseholds = () => {
 };
 
 // ================= PUBLIC REQUESTS & COMPLAINTS (PETITIONS) STORE (Requirement 07) ================= //
-export const DEFAULT_PETITIONS: PublicPetition[] = [
-  {
-    id: 'REQ-211-2026-001',
-    tokenNumber: 'T-102',
-    citizenNic: '891902697V',
-    citizenName: 'சின்னப்பு விஜயகுமார்',
-    phone: '0760539158',
-    divisionCode: '211A',
-    targetDepartment: 'LAND',
-    requestType: 'REQUEST',
-    subject: 'அரச காணி அனுமதிப்பத்திரம் எல்லை மீளளவீடு மற்றும் புதுப்பித்தல் கோரிக்கை',
-    description: 'காயான்கேணி பகுதியில் அமைந்திருக்கும் அரச விவசாய காணியின் எல்லை வாய்க்கால் தொடர்பாக அயலவருடன் சர்ச்சை ஏற்பட்டுள்ளதால் எல்லை மீளளவீடு கோரப்பட்டுள்ளது.',
-    submittedDate: '2026-01-15',
-    status: 'FIELD_INSPECTION',
-    priority: 'HIGH',
-    assignedOfficer: 'காணி உத்தியோகத்தர் (Land Officer)',
-    assignedOfficerRole: 'LAND_OFFICER',
-    fieldInspectionDate: '2026-02-02',
-    fieldInspectionOfficer: 'கள உத்தியோகத்தர் (Field Officer)',
-    fieldInspectionFindings: 'கள ஆய்வு பூர்த்தி செய்யப்பட்டது. வரைபடம் மீளாய்வு செய்யப்பட்டு அனுமதிப்பத்திரம் புதுப்பிக்க பரிந்துரைக்கப்பட்டது.',
-    createdAt: '2026-01-15T10:30:00Z',
-    updatedAt: '2026-02-02T14:20:00Z',
-  },
-  {
-    id: 'CMP-213-2026-002',
-    tokenNumber: 'T-145',
-    citizenNic: '741239845V',
-    citizenName: 'கணபதிப்பிள்ளை சிவலிங்கம்',
-    phone: '0771234567',
-    divisionCode: '213',
-    targetDepartment: 'ASWESUMA_SAMURDHI',
-    requestType: 'COMPLAINT',
-    subject: 'அஸ்வெசும வறுமை நிலை வகைப்படுத்தல் மேன்முறையீடு மற்றும் மீளாய்வு',
-    description: 'குடும்பத்தில் சிறுநீரக நோயாளி மற்றும் மாணவி இருக்கும் நிலையில் இடைக்கால உதவிப் பிரிவில் சேர்க்கப்பட்டுள்ளதாக முறையீடு.',
-    submittedDate: '2026-01-20',
-    status: 'INQUIRY',
-    priority: 'URGENT',
-    assignedOfficer: 'அஸ்வெசும அபிவிருத்தி உத்தியோகத்தர்',
-    assignedOfficerRole: 'ADMIN 1',
-    inquiryDate: '2026-02-05',
-    inquiryNotes: 'மருத்துவ ஆவணங்கள் பெறப்பட்டு மாவட்ட நலன்புரி சபை கூட்டத்திற்கு மேன்முறையீடு அனுப்பப்பட்டுள்ளது.',
-    createdAt: '2026-01-20T09:15:00Z',
-    updatedAt: '2026-02-05T11:00:00Z',
-  },
-  {
-    id: 'REQ-212-2026-003',
-    tokenNumber: 'T-168',
-    citizenNic: '195531200194',
-    citizenName: 'பொன்னம்பலம் செல்லையா',
-    phone: '0714567890',
-    divisionCode: '212',
-    targetDepartment: 'ELDERLY',
-    requestType: 'REQUEST',
-    subject: '70+ முதியோர் கொடுப்பனவு வங்கி கணக்கு மாற்றம் & நேரடி கொடுப்பனவு கோரிக்கை',
-    description: 'நடமாட்ட சிரமம் காரணமாக மாதாந்த கொடுப்பனவை வீட்டிற்கே பெற்றுக்கொள்ள வழிவகை செய்யக் கோரிக்கை.',
-    submittedDate: '2026-02-10',
-    status: 'RESOLVED',
-    priority: 'NORMAL',
-    assignedOfficer: 'முதியோர் நலன்புரி உத்தியோகத்தர்',
-    assignedOfficerRole: 'ELDERLY_OFFICER',
-    resolutionDecision: 'தபால் அலுவலகம் ஊடாக தபால்காரர் மூலம் நேரடி கொடுப்பனவு அனுமதிக்கப்பட்டது.',
-    resolvedDate: '2026-02-18',
-    resolvedBy: 'பிரதேச செயலாளர்',
-    createdAt: '2026-02-10T11:00:00Z',
-    updatedAt: '2026-02-18T16:00:00Z',
-  },
-  {
-    id: 'REQ-211-2026-004',
-    tokenNumber: 'T-189',
-    citizenNic: '199654300982',
-    citizenName: 'சிவராசா துஷிதா',
-    phone: '0776543210',
-    divisionCode: '211',
-    targetDepartment: 'MATERNITY',
-    requestType: 'REQUEST',
-    subject: 'போசணை முத்திரை கூட்டுறவு விற்பனை நிலைய மாற்றம்',
-    description: 'வசிப்பிடம் இடம் மாறியுள்ளதால் அருகிலுள்ள கூட்டுறவு சங்க விற்பனை நிலையத்திற்கு முத்திரை பெறுதலை மாற்றுதல்.',
-    submittedDate: '2026-02-22',
-    status: 'RESOLVED',
-    priority: 'NORMAL',
-    assignedOfficer: 'கர்ப்பிணித் தாய்மார் பதிவாளர்',
-    assignedOfficerRole: 'MATERNITY_OFFICER',
-    resolutionDecision: 'கூட்டுறவு நிலைய பதிவேட்டில் மாற்றம் செய்யப்பட்டு புதிய விற்பனை நிலையத்திற்கு அட்டை இடமாற்றம் செய்யப்பட்டது.',
-    resolvedDate: '2026-02-23',
-    resolvedBy: 'ECDO உத்தியோகத்தர்',
-    createdAt: '2026-02-22T08:45:00Z',
-    updatedAt: '2026-02-23T10:15:00Z',
-  },
-  {
-    id: 'REQ-213B-2026-005',
-    tokenNumber: 'T-204',
-    citizenNic: '198821400891',
-    citizenName: 'கந்தசாமி தர்மன்',
-    phone: '0773344556',
-    divisionCode: '213B',
-    targetDepartment: 'DISABILITY',
-    requestType: 'REQUEST',
-    subject: 'சக்கர நாற்காலி மற்றும் விசேட உதவி உபகரணங்கள் பெறுவதற்கான விண்ணப்பம்',
-    description: 'விபத்தினால் கால்கள் செயலிழந்த குடும்ப உறுப்பினருக்கு சக்கர நாற்காலி கோரிக்கை.',
-    submittedDate: '2026-02-28',
-    status: 'PENDING',
-    priority: 'HIGH',
-    assignedOfficer: 'மாற்றுத்திறனாளிகள் நலன்புரி உத்தியோகத்தர்',
-    assignedOfficerRole: 'DISABILITY_OFFICER',
-    createdAt: '2026-02-28T14:00:00Z',
-    updatedAt: '2026-02-28T14:00:00Z',
-  }
-];
+export const DEFAULT_PETITIONS: PublicPetition[] = [];
 
 export const loadPetitions = (): PublicPetition[] => {
   return getStoredData<PublicPetition[]>(STORAGE_KEYS.PETITIONS, DEFAULT_PETITIONS);
@@ -1715,12 +1541,15 @@ export const checkDuplicateAssistance = (
 
 // Database Snapshot for Google Drive / JSON file
 export const createDatabaseSnapshot = () => {
+  const currentBeneficiaries = loadBeneficiaries();
   return {
     version: '4.0',
     exportedAt: new Date().toISOString(),
+    clearedAt: getLastClearAt() || undefined,
+    explicitlyCleared: currentBeneficiaries.length === 0,
     organization: 'Divisional Secretariat Koralaipattu North (Vaharai)',
     users: loadUsers(),
-    beneficiaries: loadBeneficiaries(),
+    beneficiaries: currentBeneficiaries,
     tokens: loadTokens(),
     divisions: loadDivisions(),
     dsDivisions: loadDsDivisions(),
@@ -1732,12 +1561,73 @@ export const createDatabaseSnapshot = () => {
     households: loadHouseholds(),
     povertyWeights: loadPovertyWeights(),
     petitions: loadPetitions(),
+    driveConfig: getCurrentSharedDriveConfig(),
   };
+};
+
+export const wipeAllStorageToCleanDriveState = async (): Promise<ReturnType<typeof createDatabaseSnapshot>> => {
+  const clearStamp = setLastClearAt(new Date().toISOString());
+  memoryStore.clear();
+  failedStorageKeys.clear();
+
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    const keepDriveKeys = new Set([
+      'vaharai_ds_designated_drive_file_id',
+      'vaharai_ds_designated_drive_file_name',
+      'vaharai_ds_google_sheet_url',
+      'vaharai_ds_apps_script_relay_url',
+      'vaharai_ds_drive_public_shared',
+      'vaharai_ds_drive_web_link',
+      'vaharai_ds_drive_owner_email',
+      'vaharai_ds_drive_auto_sync_enabled',
+      'vaharai_ds_drive_user',
+      CLEAN_DRIVE_MODE_FLAG,
+      LAST_CLEAR_AT_KEY,
+    ]);
+    try {
+      Object.keys(localStorage).forEach((k) => {
+        if (k.startsWith('vaharai_ds_') && !keepDriveKeys.has(k)) {
+          localStorage.removeItem(k);
+        }
+      });
+      localStorage.setItem(CLEAN_DRIVE_MODE_FLAG, 'true');
+      localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
+      localStorage.setItem(LAST_CLEAR_AT_KEY, clearStamp);
+    } catch {
+      // ignore
+    }
+  }
+
+  await clearIndexedDbStore();
+
+  // Persist empty citizen/record collections while keeping staff logins & divisions intact
+  setStoredData(STORAGE_KEYS.USERS, loadUsers());
+  setStoredData(STORAGE_KEYS.DIVISIONS, loadDivisions());
+  setStoredData(STORAGE_KEYS.DS_DIVISIONS, loadDsDivisions());
+  setStoredData(STORAGE_KEYS.SERVICES, loadServices());
+  setStoredData(STORAGE_KEYS.POVERTY_WEIGHTS, DEFAULT_POVERTY_WEIGHTS);
+  setStoredData(STORAGE_KEYS.BENEFICIARIES, []);
+  setStoredData(STORAGE_KEYS.TOKENS, []);
+  setStoredData(STORAGE_KEYS.ASSISTANCE, []);
+  setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, []);
+  setStoredData(STORAGE_KEYS.LAND_RECORDS, []);
+  setStoredData(STORAGE_KEYS.HOUSEHOLDS, []);
+  setStoredData(STORAGE_KEYS.PETITIONS, []);
+  setStoredData(STORAGE_KEYS.AUDIT_LOGS, []);
+  setStoredData(STORAGE_KEYS.DELETED_IDS, []);
+
+  const cleanSnapshot = createDatabaseSnapshot();
+  await pushToCentralDatabase(cleanSnapshot);
+  notifyCrossTabSync('DATABASE_WIPED_CLEAN');
+  return cleanSnapshot;
 };
 
 export const restoreDatabaseFromSnapshot = (snapshot: any): boolean => {
   if (!snapshot || (!Array.isArray(snapshot.users) && !Array.isArray(snapshot.beneficiaries) && !Array.isArray(snapshot.divisions))) {
     throw new Error('Invalid backup file structure.');
+  }
+  if (typeof snapshot.clearedAt === 'string' && snapshot.clearedAt) {
+    setLastClearAt(snapshot.clearedAt);
   }
   if (Array.isArray(snapshot.users)) setStoredData(STORAGE_KEYS.USERS, snapshot.users);
   if (Array.isArray(snapshot.beneficiaries)) {
@@ -1746,6 +1636,9 @@ export const restoreDatabaseFromSnapshot = (snapshot: any): boolean => {
       try {
         if (snapshot.beneficiaries.length > 0) {
           localStorage.removeItem('vaharai_ds_beneficiaries_cleared');
+          if (!snapshot.explicitlyCleared) {
+            localStorage.removeItem(LAST_CLEAR_AT_KEY);
+          }
         } else {
           localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
         }

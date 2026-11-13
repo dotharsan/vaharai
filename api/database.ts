@@ -75,6 +75,22 @@ export default function handler(req: any, res: any) {
         return res.status(400).json({ success: false, error: 'Invalid database snapshot format' });
       }
 
+      const current = inMemorySnapshot || getSeedData();
+      if (
+        current?.explicitlyCleared === true &&
+        current?.clearedAt &&
+        !snapshot.explicitlyCleared &&
+        snapshot.clearedAt !== current.clearedAt &&
+        !snapshot.driveConfig
+      ) {
+        return res.status(200).json({
+          success: true,
+          ignoredStale: true,
+          message: 'Ignored stale pre-clear client snapshot to preserve clean central storage',
+          data: current,
+        });
+      }
+
       snapshot.lastServerSync = new Date().toISOString();
       inMemorySnapshot = snapshot;
 

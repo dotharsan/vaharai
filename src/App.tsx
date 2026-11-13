@@ -48,6 +48,8 @@ import {
   getDsDivisionById,
   getLastLocalMutationAt,
   hydrateStorageFromIndexedDb,
+  getLastClearAt,
+  setLastClearAt,
 } from './services/storage';
 import {
   getActiveUserSession,
@@ -66,6 +68,9 @@ import {
   isCustomDesignatedFileSet,
   getGoogleSheetUrl,
   isDriveAutoSyncEnabled,
+  fetchSharedDriveConfigFromServer,
+  applySharedDriveConfigLocally,
+  getAppsScriptRelayUrl,
 } from './services/googleDrive';
 import { Header } from './components/Header';
 import { LoginView } from './components/LoginView';
@@ -242,6 +247,9 @@ export default function App() {
 
     const hydrateAllFromRemote = (remote: any) => {
       if (!remote || !isMounted) return;
+      if (remote.driveConfig && typeof remote.driveConfig === 'object') {
+        applySharedDriveConfigLocally(remote.driveConfig);
+      }
       if (Array.isArray(remote.dsDivisions) && remote.dsDivisions.length > 0) {
         try {
           localStorage.setItem('vaharai_ds_secretariats_v1', JSON.stringify(remote.dsDivisions));
@@ -257,6 +265,45 @@ export default function App() {
         saveDivisions(mergedDivs, false);
         setDivisions(mergedDivs);
       }
+      if (Array.isArray(remote.users) && remote.users.length > 0) {
+        const mergedUsers = mergeByKey(loadUsers(), remote.users, (u) => u.id);
+        saveUsers(mergedUsers, false);
+        setUsers(mergedUsers);
+      }
+
+      // If remote explicitly cleared all beneficiaries/records more recently than this browser, mirror empty state
+      const remoteClearTime = remote.clearedAt ? Date.parse(remote.clearedAt) : 0;
+      const localClearTime = getLastClearAt() ? Date.parse(getLastClearAt()) : 0;
+      if (
+        remote.explicitlyCleared === true &&
+        Array.isArray(remote.beneficiaries) &&
+        remote.beneficiaries.length === 0 &&
+        remoteClearTime > localClearTime
+      ) {
+        setLastClearAt(remote.clearedAt);
+        saveBeneficiaries([], false, false);
+        setBeneficiaries([]);
+        saveHouseholds([], false);
+        setHouseholds([]);
+        saveLandRecords([], false);
+        setLandRecords([]);
+        savePregnantMothers([], false);
+        setPregnantMothers([]);
+        saveAssistanceRecords([], false);
+        setAssistanceRecords([]);
+        saveTokens([], false);
+        setTokens([]);
+        savePetitions([], false);
+        setPetitions([]);
+        return;
+      }
+
+      // Guard against stale remote Drive/server snapshots exported before the local storage wipe
+      const remoteDataStamp = Date.parse(String(remote.lastServerSync || remote.exportedAt || '')) || 0;
+      if (localClearTime > 0 && !remote.explicitlyCleared && (remoteDataStamp === 0 || remoteDataStamp <= localClearTime)) {
+        return;
+      }
+
       if (Array.isArray(remote.beneficiaries) && remote.beneficiaries.length > 0) {
         const mergedBens = mergeByKey(
           loadBeneficiaries(),
@@ -297,19 +344,12 @@ export default function App() {
         savePetitions(mergedPetitions, false);
         setPetitions(mergedPetitions);
       }
-      if (Array.isArray(remote.users) && remote.users.length > 0) {
-        const mergedUsers = mergeByKey(loadUsers(), remote.users, (u) => u.id);
-        saveUsers(mergedUsers, false);
-        setUsers(mergedUsers);
-      }
     };
 
-    // Boot: Only auto-pull designated Drive if authenticated, custom file selected, or Google Sheet URL linked
+    // Boot: Sync shared Drive config from central server, then pull shared Google Drive storage for ALL staff browsers
     const pullFromDesignatedDrive = async () => {
-      if (!isGoogleDriveAuthenticated() && !isCustomDesignatedFileSet() && !getGoogleSheetUrl()) {
-        return;
-      }
       try {
+        await fetchSharedDriveConfigFromServer();
         const driveData = await fetchFromDesignatedDriveFile();
         if (driveData && isMounted) {
           hydrateAllFromRemote(driveData);
@@ -325,6 +365,10 @@ export default function App() {
       const currentMutationAt = getLastLocalMutationAt();
       const hasLocalChanges = currentMutationAt > lastSyncedMutationAt;
 
+      if (forcePull) {
+        await fetchSharedDriveConfigFromServer();
+      }
+
       // 1. Push any local mutations to central server immediately
       if (hasLocalChanges && isServerApiAvailable()) {
         const pushed = await pushToCentralDatabase(createDatabaseSnapshot());
@@ -333,8 +377,9 @@ export default function App() {
         }
       }
 
-      // 2. Google Drive sync check (only when user is authenticated)
-      if (isGoogleDriveAuthenticated()) {
+      // 2. Google Drive shared sync check (direct OAuth OR shared Apps Script Relay OR public read on forcePull)
+      const canWriteDrive = isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl();
+      if (canWriteDrive) {
         try {
           if (hasLocalChanges && isDriveAutoSyncEnabled()) {
             await saveToDesignatedDriveFile(createDatabaseSnapshot());
@@ -347,6 +392,15 @@ export default function App() {
           }
         } catch {
           // silent offline fallback
+        }
+      } else if (forcePull) {
+        try {
+          const driveData = await fetchFromDesignatedDriveFile();
+          if (driveData && isMounted) {
+            hydrateAllFromRemote(driveData);
+          }
+        } catch {
+          // silent fallback
         }
       }
 
@@ -694,17 +748,16 @@ export default function App() {
     setIsManualSyncing(true);
     setSyncToastMessage('');
     try {
-      if (isGoogleDriveAuthenticated()) {
-        const driveData = await fetchFromDesignatedDriveFile();
-        if (driveData && driveData.beneficiaries) {
-          restoreDatabaseFromSnapshot(driveData);
-          handleDatabaseReload();
-          setSyncToastMessage(lang === 'ta' ? 'டிரைவ் கோப்பிலிருந்து தரவுகள் பெறப்பட்டன!' : 'Pulled latest from Drive file!');
-        } else {
-          const snapshot = createDatabaseSnapshot();
-          await saveToDesignatedDriveFile(snapshot);
-          setSyncToastMessage(lang === 'ta' ? 'டிரைவ் கோப்பில் சேமிக்கப்பட்டது!' : 'Saved to Drive file!');
-        }
+      await fetchSharedDriveConfigFromServer();
+      const driveData = await fetchFromDesignatedDriveFile();
+      if (driveData && Array.isArray(driveData.beneficiaries)) {
+        restoreDatabaseFromSnapshot(driveData);
+        handleDatabaseReload();
+        setSyncToastMessage(lang === 'ta' ? 'பகிரப்பட்ட டிரைவ் கோப்பிலிருந்து தரவுகள் பெறப்பட்டன!' : 'Pulled latest from shared Drive file!');
+      } else if (isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl()) {
+        const snapshot = createDatabaseSnapshot();
+        await saveToDesignatedDriveFile(snapshot);
+        setSyncToastMessage(lang === 'ta' ? 'டிரைவ் கோப்பில் சேமிக்கப்பட்டது!' : 'Saved to Drive file!');
       } else if (isServerApiAvailable()) {
         const central = await fetchCentralDatabase();
         if (central) {
@@ -713,7 +766,7 @@ export default function App() {
           setSyncToastMessage(lang === 'ta' ? 'சர்வர் தரவுகள் புதுப்பிக்கப்பட்டன!' : 'Server data refreshed!');
         }
       } else {
-        setSyncToastMessage(lang === 'ta' ? 'டிரைவை இணைக்க வலதுபுறம் உள்ள பொத்தானை அழுத்தவும்' : 'Connect Google Drive to sync across browsers');
+        setSyncToastMessage(lang === 'ta' ? 'டிரைவ் கோப்பை பகிர அல்லது இணைக்க Drive பக்கத்தை திறக்கவும்' : 'Open Google Drive settings to connect or share');
       }
     } catch (err: any) {
       setSyncToastMessage(err.message || 'Sync failed');
@@ -730,7 +783,7 @@ export default function App() {
       const snapshot = createDatabaseSnapshot();
       await pushToCentralDatabase(snapshot);
 
-      if (isGoogleDriveAuthenticated()) {
+      if (isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl()) {
         const res = await saveToDesignatedDriveFile(snapshot);
         setDriveSyncStatus(getDriveSyncStatus());
         setSyncToastMessage(
@@ -741,8 +794,8 @@ export default function App() {
       } else {
         setSyncToastMessage(
           lang === 'ta'
-            ? 'ℹ️ மத்திய சர்வரில் சேமிக்கப்பட்டது. Google Drive-இல் நேரடியாக சேமிக்க Drive பக்கத்தில் கணக்கை இணைக்கவும்.'
-            : 'ℹ️ Saved to Central Server. Connect Google Drive in Drive settings to save to your personal Drive.'
+            ? 'ℹ️ மத்திய சர்வரில் சேமிக்கப்பட்டது. Google Drive-இல் நேரடியாக எழுத Drive பக்கத்தில் கணக்கை இணைக்கவும்.'
+            : 'ℹ️ Saved to Central Server. Connect Google Drive in Drive settings to write to Drive directly.'
         );
       }
     } catch (err: any) {

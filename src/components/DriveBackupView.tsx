@@ -29,12 +29,18 @@ import {
   getGoogleSheetUrl,
   setGoogleSheetUrl,
   fetchFromCloudProxy,
+  getAppsScriptRelayUrl,
+  setAppsScriptRelayUrl,
+  isDriveFilePubliclyShared,
+  shareDriveFileWithEveryone,
+  fetchSharedDriveConfigFromServer,
 } from '../services/googleDrive';
 import {
   createDatabaseSnapshot,
   restoreDatabaseFromSnapshot,
   getCentralDatabaseStatus,
   pushToCentralDatabase,
+  wipeAllStorageToCleanDriveState,
 } from '../services/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -72,6 +78,10 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   const [fileIdInput, setFileIdInput] = useState<string>(() => getDesignatedDriveFileId());
   const [driveSyncState, setDriveSyncState] = useState<DriveSyncStatus>(() => getDriveSyncStatus());
   const [sheetUrlInput, setSheetUrlInput] = useState<string>(() => getGoogleSheetUrl());
+  const [relayUrlInput, setRelayUrlInput] = useState<string>(() => getAppsScriptRelayUrl());
+  const [isPublicShared, setIsPublicShared] = useState<boolean>(() => isDriveFilePubliclyShared());
+  const [showAppsScriptModal, setShowAppsScriptModal] = useState<boolean>(false);
+  const [copiedScript, setCopiedScript] = useState<boolean>(false);
 
   // Confirmation dialog states for destructive/mutating operations (Workspace Integration Policy)
   const [confirmModalItem, setConfirmModalItem] = useState<DriveBackupItem | null>(null);
@@ -82,6 +92,10 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   } | null>(null);
   const [pullConfirmOpen, setPullConfirmOpen] = useState<boolean>(false);
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<DriveBackupItem | null>(null);
+  const [shareConfirmOpen, setShareConfirmOpen] = useState<boolean>(false);
+  const [wipeConfirmOpen, setWipeConfirmOpen] = useState<boolean>(false);
+  const [createBackupConfirmOpen, setCreateBackupConfirmOpen] = useState<boolean>(false);
+  const [localRestorePending, setLocalRestorePending] = useState<{ fileName: string; snapshot: any } | null>(null);
 
   useEffect(() => {
     const syncAuthState = () => {
@@ -98,12 +112,23 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     };
 
     syncAuthState();
+    void fetchSharedDriveConfigFromServer().then((cfg) => {
+      if (cfg) {
+        setDesignatedFileIdState(cfg.fileId);
+        setDesignatedFileNameState(cfg.fileName);
+        setFileIdInput(cfg.fileId);
+        if (cfg.relayUrl !== undefined) setRelayUrlInput(cfg.relayUrl);
+        if (cfg.isPubliclyReadable !== undefined) setIsPublicShared(cfg.isPubliclyReadable);
+      }
+    });
 
     // Subscribe to drive sync status
     const unsubscribe = onDriveSyncStatusChange((st) => {
       setDriveSyncState(st);
       if (st.fileId) setDesignatedFileIdState(st.fileId);
       if (st.fileName) setDesignatedFileNameState(st.fileName);
+      if (st.relayUrl !== undefined) setRelayUrlInput(st.relayUrl);
+      if (st.isPubliclyReadable !== undefined) setIsPublicShared(st.isPubliclyReadable);
     });
 
     const handleAuthChanged = () => syncAuthState();
@@ -233,7 +258,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     }
   };
 
-  const handleCreateDriveBackup = async () => {
+  const handleConfirmCreateDriveBackup = async () => {
     setIsLoading(true);
     setErrorMessage('');
     try {
@@ -241,6 +266,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
       const newFile = await uploadBackupToDrive(snapshot);
       setStatusMessage(`${t.backupSuccess} (${newFile.name})`);
       onAuditLog('DRIVE_BACKUP', `Uploaded database backup to Google Drive: ${newFile.name}`);
+      setCreateBackupConfirmOpen(false);
       await fetchBackups();
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to backup to Google Drive');
@@ -436,6 +462,71 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     }
   };
 
+  const handleSaveRelayUrl = () => {
+    const saved = setAppsScriptRelayUrl(relayUrlInput);
+    setStatusMessage(
+      saved
+        ? (lang === 'ta' ? '✅ பகிரப்பட்ட Google Apps Script Relay முகவரி சேமிக்கப்பட்டது! இனி அனைத்து கணினிகளும் உங்கள் டிரைவில் நேரடியாகப் பதியலாம்.' : '✅ Shared Google Apps Script Relay URL saved for all workstations!')
+        : (lang === 'ta' ? 'Relay இணைப்பு நீக்கப்பட்டது.' : 'Relay URL removed.')
+    );
+  };
+
+  const handleConfirmShareForEveryone = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const res = await shareDriveFileWithEveryone(designatedFileId);
+      setIsPublicShared(true);
+      setShareConfirmOpen(false);
+      setStatusMessage(
+        lang === 'ta'
+          ? `🌐 டிரைவ் கோப்பு (${res.fileId}) அனைவரும் வாசிக்கக்கூடிய பகிரப்பட்ட சேமிப்பகமாக மாற்றப்பட்டது!`
+          : `🌐 Drive file (${res.fileId}) is now shared with Anyone with the link!`
+      );
+      onAuditLog('DRIVE_SHARE_PUBLIC', `Enabled Anyone-with-link access on Google Drive file: ${res.fileId}`);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to share Drive file');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConfirmWipeAndResetDrive = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      const cleanSnapshot = await wipeAllStorageToCleanDriveState();
+      onDatabaseReload();
+      const status = await getCentralDatabaseStatus();
+      if (status) setServerDbStatus(status);
+
+      if (isConnected || !!getAppsScriptRelayUrl()) {
+        const res = await saveToDesignatedDriveFile(cleanSnapshot, designatedFileId);
+        setDesignatedFileIdState(res.fileId);
+        setDesignatedFileNameState(res.fileName);
+        setFileIdInput(res.fileId);
+        setStatusMessage(
+          lang === 'ta'
+            ? `✅ பழைய அனைத்து சேமிப்பகமும் அழிக்கப்பட்டு, காலியான பயனாளிகள் (0 பிரஜைகள்) கொண்ட புதிய தரவுத்தளம் Google Drive-இல் (${res.fileName}) சேமிக்கப்பட்டது!`
+            : `✅ All old storage wiped and clean empty database (0 citizens) saved to Google Drive (${res.fileName})!`
+        );
+        await fetchBackups();
+      } else {
+        setStatusMessage(
+          lang === 'ta'
+            ? '✅ பழைய உலாவி மற்றும் சர்வர் சேமிப்பகங்கள் அனைத்தும் அழிக்கப்பட்டு பயனாளிகள் விபரம் 0 ஆக மாற்றப்பட்டது! இப்போது "Connect Drive" செய்து உங்கள் டிரைவில் சேமிக்கவும்.'
+            : '✅ All browser and server storage wiped (0 citizens). Connect Google Drive above to push this clean state to Drive.'
+        );
+      }
+      onAuditLog('WIPE_STORAGE_RESET_EMPTY', 'Cleared all storage and reset beneficiaries to empty');
+      setWipeConfirmOpen(false);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to wipe storage');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Local JSON File export
   const handleDownloadLocalBackup = () => {
     const snapshot = createDatabaseSnapshot();
@@ -454,22 +545,31 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!window.confirm(t.confirmRestore)) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const text = event.target?.result as string;
         const snapshot = JSON.parse(text);
-        restoreDatabaseFromSnapshot(snapshot);
-        onDatabaseReload();
-        setStatusMessage(t.restoreSuccess);
-        onAuditLog('LOCAL_RESTORE', `Restored database from local file: ${file.name}`);
-      } catch (err: any) {
+        setLocalRestorePending({ fileName: file.name, snapshot });
+      } catch {
         setErrorMessage(lang === 'ta' ? 'செல்லுபடியற்ற JSON காப்புப்பிரதி கோப்பு!' : 'Invalid JSON backup file!');
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleConfirmLocalRestore = () => {
+    if (!localRestorePending) return;
+    try {
+      restoreDatabaseFromSnapshot(localRestorePending.snapshot);
+      onDatabaseReload();
+      setStatusMessage(t.restoreSuccess);
+      onAuditLog('LOCAL_RESTORE', `Restored database from local file: ${localRestorePending.fileName}`);
+      setLocalRestorePending(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Restore failed');
+    }
   };
 
   return (
@@ -731,6 +831,101 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
                 : 'Download Master Database JSON'}
             </span>
           </button>
+        </div>
+
+        {/* Shared Drive Access for Everyone + Reset Empty Storage Controls */}
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3 pt-4 border-t border-slate-200">
+          <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                <span>🌐</span>
+                <span>{lang === 'ta' ? 'அனைவரும் பயன்படுத்தும் பகிர்வு (Everyone Access)' : 'Shared Storage for Everyone'}</span>
+              </span>
+              {isPublicShared && (
+                <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-full text-[10px] font-bold">
+                  ✓ {lang === 'ta' ? 'பகிரப்பட்டது' : 'Shared Publicly'}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              {lang === 'ta'
+                ? 'இதை அழுத்தினால் இந்த Drive கோப்பு "Anyone with the link" மூலம் அனைத்து உலாவிகளும் (Chrome/Edge) வாசிக்கக் கூடியதாக மாற்றப்படும்.'
+                : 'Grants Anyone-with-link read access on this Google Drive file so all workstations load directly from your Drive.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (!isConnected) {
+                  setErrorMessage(lang === 'ta' ? 'முதலில் மேலே உள்ள "Connect Drive" மூலம் உங்கள் கூகிள் கணக்கை இணைக்கவும்.' : 'Connect your Google Drive account first.');
+                  return;
+                }
+                setShareConfirmOpen(true);
+              }}
+              disabled={isLoading}
+              className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-1.5"
+            >
+              <span>🔓</span>
+              <span>{lang === 'ta' ? 'அனைவரும் பயன்படுத்தும்படி பகிருக (Share File)' : 'Make Drive File Shared for Everyone'}</span>
+            </button>
+          </div>
+
+          <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2">
+            <div className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+              <span>🧹</span>
+              <span>{lang === 'ta' ? 'பழைய சேமிப்பகத்தை அழித்து காலியாக்குக (0 பயனாளிகள்)' : 'Wipe All Storage & Reset Empty Beneficiaries'}</span>
+            </div>
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              {lang === 'ta'
+                ? 'உலாவி (LocalStorage / IndexedDB), சர்வர் மற்றும் இணைக்கப்பட்ட டிரைவ் கோப்பிலுள்ள பழைய பயனாளிகள் அனைத்தையும் அழித்து 0 ஆக மாற்றும்.'
+                : 'Clears browser, server, and Drive beneficiary records so the database starts completely empty (0 beneficiaries).'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setWipeConfirmOpen(true)}
+              disabled={isLoading}
+              className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-1.5"
+            >
+              <span>🗑️</span>
+              <span>{lang === 'ta' ? 'அனைத்தையும் அழித்து காலியான டிரைவ் அமை' : 'Wipe All Storage & Save Empty to Drive'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Optional Google Apps Script Shared Relay (Multi-Browser Direct Drive Write without per-user Google Sign-In) */}
+        <div className="mt-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+              <span>⚡</span>
+              <span>
+                {lang === 'ta'
+                  ? 'அனைத்து உலாவிகளும் நேரடியாக டிரைவில் சேமிக்க (Google Apps Script Shared Relay URL - விருப்பத்தேர்வு):'
+                  : 'Shared Google Apps Script Web App URL (Optional Direct Multi-Browser Drive Write):'}
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowAppsScriptModal(true)}
+              className="text-[11px] text-indigo-700 hover:underline font-bold"
+            >
+              📜 {lang === 'ta' ? 'ஸ்கிரிப்ட் குறியீட்டைப் பார் (1-Minute Setup)' : 'View Apps Script Code'}
+            </button>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={relayUrlInput}
+              onChange={(e) => setRelayUrlInput(e.target.value)}
+              placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+              className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-emerald-500 outline-hidden"
+            />
+            <button
+              type="button"
+              onClick={handleSaveRelayUrl}
+              className="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold shrink-0"
+            >
+              {lang === 'ta' ? 'Relay சேமி' : 'Save Relay URL'}
+            </button>
+          </div>
         </div>
 
         {driveSyncState.lastSyncedAt && (
@@ -1172,7 +1367,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={handleCreateDriveBackup}
+              onClick={() => setCreateBackupConfirmOpen(true)}
               disabled={!isConnected || isLoading}
               className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors shadow-xs"
             >
@@ -1495,6 +1690,206 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog for Sharing Drive File with Everyone */}
+      {shareConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center gap-2 text-emerald-700 pb-2 border-b border-slate-100">
+              <span className="text-xl">🌐</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'அனைவருக்கும் பகிர உறுதிப்படுத்தவும் (External Sharing)' : 'Confirm Share Drive File Publicly'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {lang === 'ta'
+                ? `"${designatedFileName}" (${designatedFileId}) கோப்பை "Anyone with the link can view" முறையில் பகிர விரும்புகிறீர்களா? இதன் மூலம் அனைத்து அலுவலர்களும் உலாவிகளும் (Chrome/Edge) இந்தத் தரவைப் பெற முடியும்.`
+                : `This will set Google Drive permission "Anyone with the link (Reader)" on "${designatedFileName}" (${designatedFileId}) so all office workstations can load the shared database.`}
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setShareConfirmOpen(false)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmShareForEveryone}
+                disabled={isLoading}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'ஆம், அனைவருக்கும் பகிருக' : 'Confirm Share'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Wiping All Storage & Initializing Clean Empty Drive DB */}
+      {wipeConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-rose-200">
+            <div className="flex items-center gap-2 text-rose-700 pb-2 border-b border-rose-100">
+              <span className="text-xl">🧹</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'அனைத்து சேமிப்பகத்தையும் அழிக்க உறுதிப்படுத்தவும்' : 'Confirm Wipe All Storage (0 Beneficiaries)'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {lang === 'ta'
+                ? 'உலாவி (LocalStorage, IndexedDB), சர்வர் மற்றும் இணைக்கப்பட்டுள்ள Google Drive கோப்பிலுள்ள அனைத்துப் பழைய பயனாளிகள், குடும்பங்கள், டோக்கன்கள், உதவிகள் அனைத்தும் நிரந்தரமாக அழிக்கப்பட்டு 0 ஆக மாற்றப்படும். (உத்தியோகத்தர் Login கணக்குகள் மற்றும் கிராமப் பிரிவுகள் பாதுகாக்கப்படும்).'
+                : 'This will permanently clear all beneficiaries, households, tokens, petitions, land records, and assistance data across browser storage, server database, and your designated Google Drive file (staff accounts & divisions stay intact).'}
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setWipeConfirmOpen(false)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmWipeAndResetDrive}
+                disabled={isLoading}
+                className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'ஆம், அனைத்தையும் அழித்து காலியாக்குக' : 'Confirm Wipe & Reset Empty'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Creating a New Timestamped Drive Backup */}
+      {createBackupConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center gap-2 text-emerald-700 pb-2 border-b border-slate-100">
+              <span className="text-xl">💾</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'புதிய Google Drive காப்புப்பிரதி உருவாக்கவா?' : 'Create New Google Drive Backup?'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {lang === 'ta'
+                ? 'உங்கள் Google Drive கணக்கில் தற்போதைய தரவுத்தளத்தின் புதிய JSON காப்புப்பிரதி கோப்பு உருவாக்கப்படும்.'
+                : 'This will upload a new timestamped JSON snapshot file to your Google Drive.'}
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setCreateBackupConfirmOpen(false)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCreateDriveBackup}
+                disabled={isLoading}
+                className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'ஆம், உருவாக்குக' : 'Confirm Upload'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Local JSON File Restore */}
+      {localRestorePending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div className="flex items-center gap-2 text-amber-600 pb-2 border-b border-slate-100">
+              <span className="text-xl">📥</span>
+              <h3 className="text-sm font-bold text-slate-900">
+                {lang === 'ta' ? 'உள்ளூர் JSON கோப்பிலிருந்து மீட்டெடுக்க உறுதிப்படுத்தவும்' : 'Confirm Local JSON Restore'}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+              {t.confirmRestore}
+            </p>
+            <div className="mt-3 p-2.5 bg-slate-50 rounded-lg text-xs font-mono text-slate-700">
+              📄 {localRestorePending.fileName} · {localRestorePending.snapshot?.beneficiaries?.length || 0} citizens
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setLocalRestorePending(null)}
+                className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+              >
+                {t.cancel}
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLocalRestore}
+                className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold shadow-xs"
+              >
+                {lang === 'ta' ? 'மீட்டெடுக்கவும்' : 'Confirm Restore'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Google Apps Script Multi-User Relay Instructions Modal */}
+      {showAppsScriptModal && (() => {
+        const scriptSnippet = `function doGet(e) {
+  var fileId = (e && e.parameter && e.parameter.fileId) || "${designatedFileId}";
+  var content = DriveApp.getFileById(fileId).getBlob().getDataAsString();
+  return ContentService.createTextOutput(content).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  var body = JSON.parse(e.postData.contents || "{}");
+  var fileId = body.fileId || "${designatedFileId}";
+  var payload = JSON.stringify(body.data || body, null, 2);
+  DriveApp.getFileById(fileId).setContent(payload);
+  return ContentService.createTextOutput(JSON.stringify({ success: true, fileId: fileId })).setMimeType(ContentService.MimeType.JSON);
+}`;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full p-6 border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <h3 className="text-sm font-bold text-slate-900">
+                  {lang === 'ta' ? '📜 Google Apps Script - அனைவரும் நேரடியாக Drive-இல் சேமிக்கும் முறை' : 'Google Apps Script Shared Drive Relay Setup'}
+                </h3>
+                <button type="button" onClick={() => setShowAppsScriptModal(false)} className="text-slate-400 hover:text-slate-700 font-bold">✕</button>
+              </div>
+              <ol className="list-decimal list-inside text-xs text-slate-600 space-y-1">
+                <li>{lang === 'ta' ? 'உங்கள் Google கணக்கில் script.google.com திறந்து புதிய Project உருவாக்கவும்.' : 'Open script.google.com in your Google account and create a New Project.'}</li>
+                <li>{lang === 'ta' ? 'கீழே உள்ள குறியீட்டை ஒட்டவும்:' : 'Paste the code below:'}</li>
+                <li>{lang === 'ta' ? 'Deploy -> New deployment -> Web app -> Execute as: Me -> Who has access: Anyone.' : 'Deploy -> New deployment -> Web app -> Execute as: Me -> Who has access: Anyone.'}</li>
+                <li>{lang === 'ta' ? 'கிடைக்கும் Web App URL-ஐ "Shared Google Apps Script Relay URL" பகுதியில் சேமிக்கவும்.' : 'Paste the Web App URL into the Relay URL input and click Save Relay URL.'}</li>
+              </ol>
+              <pre className="p-3 bg-slate-900 text-emerald-300 rounded-lg text-[11px] font-mono overflow-x-auto select-all">{scriptSnippet}</pre>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(scriptSnippet);
+                    setCopiedScript(true);
+                    setTimeout(() => setCopiedScript(false), 2500);
+                  }}
+                  className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold"
+                >
+                  {copiedScript ? '✓ Copied!' : (lang === 'ta' ? 'குறியீட்டை நகலெடு' : 'Copy Code')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAppsScriptModal(false)}
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium"
+                >
+                  {t.close}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
