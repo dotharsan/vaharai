@@ -47,6 +47,7 @@ import {
   createDatabaseSnapshot,
   getDsDivisionById,
   getLastLocalMutationAt,
+  hydrateStorageFromIndexedDb,
 } from './services/storage';
 import {
   getActiveUserSession,
@@ -208,22 +209,33 @@ export default function App() {
     };
   }, []);
 
-  // Central Google Drive & Server Synchronization across multiple office computers
+  // Central Google Drive & Server Synchronization across multiple office computers & browsers
   useEffect(() => {
     let isMounted = true;
     let lastSyncedMutationAt = getLastLocalMutationAt();
+    let lastCentralSyncStamp = '';
 
     const mergeByKey = <T extends Record<string, any>>(local: T[], remote: T[], keyFn: (x: T) => string, skipFn?: (x: T) => boolean): T[] => {
       const map = new Map<string, T>();
-      remote.forEach((item) => {
-        if (skipFn && skipFn(item)) return;
-        const k = keyFn(item);
-        if (k) map.set(k, item);
-      });
       local.forEach((item) => {
         if (skipFn && skipFn(item)) return;
         const k = keyFn(item);
         if (k) map.set(k, item);
+      });
+      remote.forEach((item) => {
+        if (skipFn && skipFn(item)) return;
+        const k = keyFn(item);
+        if (!k) return;
+        const existing = map.get(k);
+        if (!existing) {
+          map.set(k, item);
+          return;
+        }
+        const remoteTime = item.updatedAt ? Date.parse(item.updatedAt) : 0;
+        const localTime = existing.updatedAt ? Date.parse(existing.updatedAt) : 0;
+        if (remoteTime > localTime) {
+          map.set(k, item);
+        }
       });
       return Array.from(map.values());
     };
@@ -242,7 +254,7 @@ export default function App() {
       }
       if (Array.isArray(remote.divisions) && remote.divisions.length > 0) {
         const mergedDivs = mergeByKey(loadDivisions(), remote.divisions, (d) => (d.code || '').trim().toUpperCase());
-        saveDivisions(mergedDivs);
+        saveDivisions(mergedDivs, false);
         setDivisions(mergedDivs);
       }
       if (Array.isArray(remote.beneficiaries) && remote.beneficiaries.length > 0) {
@@ -252,42 +264,42 @@ export default function App() {
           (b) => b.id || b.nic,
           (b) => isRecordDeleted(b.id, b.nic)
         );
-        saveBeneficiaries(mergedBens, false);
+        saveBeneficiaries(mergedBens, false, false);
         setBeneficiaries(mergedBens);
       }
       if (Array.isArray(remote.households) && remote.households.length > 0) {
         const mergedHouseholds = mergeByKey(loadHouseholds(), remote.households, (h) => h.familyCode || h.id);
-        saveHouseholds(mergedHouseholds);
+        saveHouseholds(mergedHouseholds, false);
         setHouseholds(mergedHouseholds);
       }
       if (Array.isArray(remote.landRecords) && remote.landRecords.length > 0) {
         const mergedLand = mergeByKey(loadLandRecords(), remote.landRecords, (l) => l.id || l.permitNo);
-        saveLandRecords(mergedLand);
+        saveLandRecords(mergedLand, false);
         setLandRecords(mergedLand);
       }
       if (Array.isArray(remote.pregnantMothers) && remote.pregnantMothers.length > 0) {
         const mergedMat = mergeByKey(loadPregnantMothers(), remote.pregnantMothers, (m) => m.id || m.nic, (m) => isRecordDeleted(m.id, m.nic));
-        savePregnantMothers(mergedMat);
+        savePregnantMothers(mergedMat, false);
         setPregnantMothers(mergedMat);
       }
       if (Array.isArray(remote.assistance) && remote.assistance.length > 0) {
         const mergedAid = mergeByKey(loadAssistanceRecords(), remote.assistance, (a) => a.id);
-        saveAssistanceRecords(mergedAid);
+        saveAssistanceRecords(mergedAid, false);
         setAssistanceRecords(mergedAid);
       }
       if (Array.isArray(remote.tokens) && remote.tokens.length > 0) {
         const mergedTokens = mergeByKey(loadTokens(), remote.tokens, (t) => t.id);
-        saveTokens(mergedTokens);
+        saveTokens(mergedTokens, false);
         setTokens(mergedTokens);
       }
       if (Array.isArray(remote.petitions) && remote.petitions.length > 0) {
         const mergedPetitions = mergeByKey(loadPetitions(), remote.petitions, (p) => p.id);
-        savePetitions(mergedPetitions);
+        savePetitions(mergedPetitions, false);
         setPetitions(mergedPetitions);
       }
       if (Array.isArray(remote.users) && remote.users.length > 0) {
         const mergedUsers = mergeByKey(loadUsers(), remote.users, (u) => u.id);
-        saveUsers(mergedUsers);
+        saveUsers(mergedUsers, false);
         setUsers(mergedUsers);
       }
     };
@@ -307,27 +319,7 @@ export default function App() {
       }
     };
 
-    const syncInit = async () => {
-      await pullFromDesignatedDrive();
-
-      // Check central database API
-      try {
-        if (isServerApiAvailable()) {
-          const central = await fetchCentralDatabase();
-          if (central && isMounted) {
-            hydrateAllFromRemote(central);
-          }
-        }
-      } catch (err) {
-        console.warn('Initial central sync failed:', err);
-      }
-      lastSyncedMutationAt = getLastLocalMutationAt();
-    };
-
-    syncInit();
-
-    // Polling interval: NEVER delete or clobber local CSV data!
-    const syncInterval = setInterval(async () => {
+    const runCentralSyncCycle = async (forcePull: boolean = false) => {
       if (!isMounted) return;
 
       const currentMutationAt = getLastLocalMutationAt();
@@ -349,17 +341,8 @@ export default function App() {
             lastSyncedMutationAt = currentMutationAt;
           } else {
             const driveData = await fetchFromDesignatedDriveFile();
-            if (driveData && isMounted && Array.isArray(driveData.beneficiaries)) {
-              const local = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
-              const existingKeys = new Set(local.map((b) => b.id || b.nic));
-              const newFromRemote = driveData.beneficiaries.filter(
-                (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingKeys.has(b.id || b.nic)
-              );
-              if (newFromRemote.length > 0) {
-                const merged = [...local, ...newFromRemote];
-                saveBeneficiaries(merged, false);
-                setBeneficiaries(merged);
-              }
+            if (driveData && isMounted) {
+              hydrateAllFromRemote(driveData);
             }
           }
         } catch {
@@ -367,53 +350,71 @@ export default function App() {
         }
       }
 
-      // 3. Central Server incremental pull
-      if (isServerApiAvailable() && !hasLocalChanges) {
+      // 3. Central Server pull for all collections (beneficiaries, households, mothers, land, petitions, etc.)
+      if (isServerApiAvailable() && (!hasLocalChanges || forcePull)) {
         try {
           const central = await fetchCentralDatabase();
           if (central && isMounted) {
-            const local = loadBeneficiaries().filter((b) => !isRecordDeleted(b.id, b.nic));
-            if (Array.isArray(central.beneficiaries)) {
-              const existingKeys = new Set(local.map((b) => b.id || b.nic));
-              const newFromCentral = central.beneficiaries.filter(
-                (b: Beneficiary) => !isRecordDeleted(b.id, b.nic) && !existingKeys.has(b.id || b.nic)
-              );
-              if (newFromCentral.length > 0) {
-                const merged = [...local, ...newFromCentral];
-                saveBeneficiaries(merged, false);
-                setBeneficiaries(merged);
-              }
-            }
-            if (Array.isArray(central.tokens) && central.tokens.length > 0) {
-              const localTokens = loadTokens();
-              const existingTokenIds = new Set(localTokens.map((t) => t.id));
-              const newTokens = central.tokens.filter((t: QueueToken) => !existingTokenIds.has(t.id));
-              if (newTokens.length > 0) {
-                const mergedTokens = [...localTokens, ...newTokens];
-                setTokens(mergedTokens);
-                saveTokens(mergedTokens);
-              }
-            }
-            if (Array.isArray(central.assistance) && central.assistance.length > 0) {
-              const localAssistance = loadAssistanceRecords();
-              const existingIds = new Set(localAssistance.map((a) => a.id));
-              const newAid = central.assistance.filter((a: AssistanceRecord) => !existingIds.has(a.id));
-              if (newAid.length > 0) {
-                const mergedAid = [...localAssistance, ...newAid];
-                saveAssistanceRecords(mergedAid);
-                setAssistanceRecords(mergedAid);
-              }
+            const stamp = String(central.lastServerSync || central.exportedAt || '');
+            if (forcePull || !stamp || stamp !== lastCentralSyncStamp) {
+              hydrateAllFromRemote(central);
+              if (stamp) lastCentralSyncStamp = stamp;
             }
           }
         } catch {
           // offline fallback
         }
       }
-    }, 25000);
+    };
+
+    const syncInit = async () => {
+      // 1. Restore any large datasets (>5MB) saved in IndexedDB before syncing with server
+      const restoredFromIdb = await hydrateStorageFromIndexedDb();
+      if (restoredFromIdb && isMounted) {
+        handleDatabaseReload();
+      }
+
+      await pullFromDesignatedDrive();
+
+      // 2. Pull central database & push merged snapshot if local IndexedDB had extra records
+      try {
+        if (isServerApiAvailable()) {
+          const localBeforeCount = loadBeneficiaries().length + loadHouseholds().length;
+          const central = await fetchCentralDatabase();
+          if (central && isMounted) {
+            const centralCount = (central.beneficiaries?.length || 0) + (central.households?.length || 0);
+            hydrateAllFromRemote(central);
+            if (central.lastServerSync) lastCentralSyncStamp = String(central.lastServerSync);
+            if (localBeforeCount > centralCount) {
+              await pushToCentralDatabase(createDatabaseSnapshot());
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Initial central sync failed:', err);
+      }
+      lastSyncedMutationAt = getLastLocalMutationAt();
+    };
+
+    syncInit();
+
+    const syncInterval = setInterval(() => {
+      void runCentralSyncCycle(false);
+    }, 8000);
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        void runCentralSyncCycle(true);
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
       isMounted = false;
       clearInterval(syncInterval);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, []);
 

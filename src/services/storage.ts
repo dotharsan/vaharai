@@ -550,16 +550,113 @@ export const DEFAULT_SERVICES: ServiceDefinition[] = [
   },
 ];
 
-// In-memory authoritative fallback store so QuotaExceededError never drops uploaded CSV data
+// In-memory authoritative fallback store + IndexedDB so large datasets (>5MB) never drop on QuotaExceededError
 const memoryStore = new Map<string, any>();
 const failedStorageKeys = new Set<string>();
 let storageQuotaWarning = false;
 let lastLocalMutationAt = 0;
 
+const IDB_NAME = 'vaharai_ds_idb';
+const IDB_STORE = 'kv';
+const IDB_VERSION = 1;
+
+const openIdb = (): Promise<IDBDatabase | null> => {
+  if (typeof window === 'undefined' || !('indexedDB' in window)) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      const req = window.indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+};
+
+const idbPut = async (key: string, value: any): Promise<boolean> => {
+  const db = await openIdb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve(true);
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve(false);
+      };
+    } catch {
+      db.close();
+      resolve(false);
+    }
+  });
+};
+
+export const hydrateStorageFromIndexedDb = async (): Promise<boolean> => {
+  const db = await openIdb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const keys = Object.values(STORAGE_KEYS);
+      let remaining = keys.length;
+      let loadedAny = false;
+
+      if (remaining === 0) {
+        db.close();
+        resolve(false);
+        return;
+      }
+
+      keys.forEach((key) => {
+        const req = store.get(key);
+        req.onsuccess = () => {
+          if (req.result !== undefined && req.result !== null) {
+            // Prefer IndexedDB when localStorage was skipped or had smaller data
+            const existingMem = memoryStore.get(key);
+            if (!existingMem || failedStorageKeys.has(key) || (Array.isArray(req.result) && Array.isArray(existingMem) && req.result.length >= existingMem.length)) {
+              memoryStore.set(key, req.result);
+              failedStorageKeys.add(key);
+              loadedAny = true;
+            }
+          }
+          remaining -= 1;
+          if (remaining === 0) {
+            db.close();
+            resolve(loadedAny);
+          }
+        };
+        req.onerror = () => {
+          remaining -= 1;
+          if (remaining === 0) {
+            db.close();
+            resolve(loadedAny);
+          }
+        };
+      });
+    } catch {
+      db.close();
+      resolve(false);
+    }
+  });
+};
+
 export const getLastLocalMutationAt = (): number => lastLocalMutationAt;
 export const hasStorageQuotaWarning = (): boolean => storageQuotaWarning;
 
-// Helper to safely read from localStorage with in-memory fallback
+// Helper to safely read from localStorage with memoryStore / IndexedDB priority for oversized keys
 export const getStoredData = <T>(key: string, fallback: T): T => {
   if (failedStorageKeys.has(key) && memoryStore.has(key)) {
     return memoryStore.get(key) as T;
@@ -592,18 +689,41 @@ export const getStoredData = <T>(key: string, fallback: T): T => {
 export const setStoredData = <T>(key: string, data: T): void => {
   memoryStore.set(key, data);
   lastLocalMutationAt = Date.now();
-  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+  if (typeof window === 'undefined') {
     return;
   }
-  const serialized = JSON.stringify(data);
+  // Always persist to IndexedDB so datasets >5MB survive page reloads cleanly
+  void idbPut(key, data);
+
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(data);
+  } catch {
+    failedStorageKeys.add(key);
+    return;
+  }
+
+  // Skip localStorage for large payloads (>1.8MB) to avoid QuotaExceededError; IndexedDB handles them cleanly
+  if (serialized.length > 1_800_000) {
+    failedStorageKeys.add(key);
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
   try {
     localStorage.setItem(key, serialized);
     failedStorageKeys.delete(key);
-  } catch (err) {
+  } catch {
     storageQuotaWarning = true;
-    console.warn(`localStorage write warning for key ${key}, compacting audit logs and retrying:`, err);
     try {
-      // Compact non-critical audit logs first to free quota for citizen/CSV records
       if (key !== STORAGE_KEYS.AUDIT_LOGS) {
         const logsRaw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
         if (logsRaw) {
@@ -615,10 +735,13 @@ export const setStoredData = <T>(key: string, data: T): void => {
       }
       localStorage.setItem(key, serialized);
       failedStorageKeys.delete(key);
-    } catch (retryErr) {
-      // Keep authoritative copy in memoryStore so handleDatabaseReload never reverts to stale data
+    } catch {
       failedStorageKeys.add(key);
-      console.error(`Failed to write to localStorage for key ${key} (using in-memory store + central server):`, retryErr);
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
     }
   }
 };
@@ -665,9 +788,9 @@ export const loadUsers = (): User[] => {
   }
   return users;
 };
-export const saveUsers = (users: User[]) => {
+export const saveUsers = (users: User[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.USERS, users);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 // 10 Months Expiry & Stamp Voucher Calculations
@@ -710,12 +833,12 @@ export const loadPregnantMothers = (): PregnantMotherRecord[] => {
   return getStoredData<PregnantMotherRecord[]>(STORAGE_KEYS.PREGNANT_MOTHERS, []);
 };
 
-export const savePregnantMothers = (records: PregnantMotherRecord[]) => {
+export const savePregnantMothers = (records: PregnantMotherRecord[], sync: boolean = true) => {
   records.forEach((m) => {
     removeDeletedId(m.id, m.nic);
   });
   setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, records);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 export const checkDuplicateActivePregnantMother = (
@@ -785,7 +908,7 @@ export const loadBeneficiaries = (): Beneficiary[] => {
   });
 };
 
-export const saveBeneficiaries = (items: Beneficiary[], trackDeletions: boolean = true) => {
+export const saveBeneficiaries = (items: Beneficiary[], trackDeletions: boolean = true, sync: boolean = true) => {
   if (trackDeletions) {
     const prev = getStoredData<Beneficiary[]>(STORAGE_KEYS.BENEFICIARIES, []);
     const newIds = new Set(items.map((b) => b.id).filter(Boolean));
@@ -815,7 +938,7 @@ export const saveBeneficiaries = (items: Beneficiary[], trackDeletions: boolean 
     }
   }
   setStoredData(STORAGE_KEYS.BENEFICIARIES, items);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 export const deleteSingleBeneficiary = (id: string, nic?: string) => {
@@ -883,17 +1006,17 @@ export const loadTokens = (): QueueToken[] => {
     officerToMeet: tok.officerToMeet || 'அட்மின் 01 (Admin 1)',
   }));
 };
-export const saveTokens = (tokens: QueueToken[]) => {
+export const saveTokens = (tokens: QueueToken[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.TOKENS, tokens);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 export const loadServices = (): ServiceDefinition[] => {
   return getStoredData<ServiceDefinition[]>(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
 };
-export const saveServices = (services: ServiceDefinition[]) => {
+export const saveServices = (services: ServiceDefinition[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.SERVICES, services);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 // ================= LAND BRANCH DATA STORE (Requirement 05) ================= //
@@ -956,12 +1079,12 @@ export const loadLandRecords = (): LandRecord[] => {
   return getStoredData<LandRecord[]>(STORAGE_KEYS.LAND_RECORDS, DEFAULT_LAND_RECORDS);
 };
 
-export const saveLandRecords = (records: LandRecord[]) => {
+export const saveLandRecords = (records: LandRecord[], sync: boolean = true) => {
   records.forEach((l) => {
     removeDeletedId(l.id, l.ownerNic);
   });
   setStoredData(STORAGE_KEYS.LAND_RECORDS, records);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 export const clearAllLandRecords = () => {
@@ -1095,13 +1218,13 @@ export const loadHouseholds = (): HouseholdData[] => {
   return getStoredData<HouseholdData[]>(STORAGE_KEYS.HOUSEHOLDS, DEFAULT_HOUSEHOLDS);
 };
 
-export const saveHouseholds = (households: HouseholdData[]) => {
+export const saveHouseholds = (households: HouseholdData[], sync: boolean = true) => {
   households.forEach((h) => {
     removeDeletedId(h.id, h.applicantNic);
     if (h.familyCode) removeDeletedId(h.familyCode);
   });
   setStoredData(STORAGE_KEYS.HOUSEHOLDS, households);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 export const saveSingleHousehold = (household: HouseholdData) => {
@@ -1236,10 +1359,12 @@ export const loadPetitions = (): PublicPetition[] => {
   return getStoredData<PublicPetition[]>(STORAGE_KEYS.PETITIONS, DEFAULT_PETITIONS);
 };
 
-export const savePetitions = (petitions: PublicPetition[]) => {
+export const savePetitions = (petitions: PublicPetition[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.PETITIONS, petitions);
-  scheduleCentralSync();
-  notifyCrossTabSync('PETITIONS_UPDATED');
+  if (sync) {
+    scheduleCentralSync();
+    notifyCrossTabSync('PETITIONS_UPDATED');
+  }
 };
 
 export const clearAllPetitionsPermanently = () => {
@@ -1401,10 +1526,12 @@ export const loadDivisions = (): GNDivision[] => {
   }
   return stored;
 };
-export const saveDivisions = (divs: GNDivision[]) => {
+export const saveDivisions = (divs: GNDivision[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.DIVISIONS, divs);
-  scheduleCentralSync();
-  notifyCrossTabSync('DIVISIONS_UPDATED');
+  if (sync) {
+    scheduleCentralSync();
+    notifyCrossTabSync('DIVISIONS_UPDATED');
+  }
 };
 
 export const loadAuditLogs = (): SystemAuditLog[] => getStoredData<SystemAuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
@@ -1504,9 +1631,9 @@ export const loadAssistanceRecords = (): AssistanceRecord[] => {
   return getStoredData<AssistanceRecord[]>(STORAGE_KEYS.ASSISTANCE, DEFAULT_ASSISTANCE_RECORDS);
 };
 
-export const saveAssistanceRecords = (records: AssistanceRecord[]) => {
+export const saveAssistanceRecords = (records: AssistanceRecord[], sync: boolean = true) => {
   setStoredData(STORAGE_KEYS.ASSISTANCE, records);
-  scheduleCentralSync();
+  if (sync) scheduleCentralSync();
 };
 
 // ================= DUPLICATE AID DETECTION & PREVENTION ENGINE ================= //
@@ -1729,6 +1856,10 @@ export const fetchCentralDatabase = async (): Promise<any | null> => {
 };
 
 export const pushToCentralDatabase = async (snapshot?: any): Promise<boolean> => {
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
   if (serverApiAvailable === false) {
     return false;
   }

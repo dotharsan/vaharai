@@ -87,7 +87,7 @@ export default function handler(req: any, res: any) {
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
-        fs.writeFileSync(dataPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+        fs.writeFileSync(dataPath, JSON.stringify(snapshot), 'utf-8');
         diskPersisted = true;
       } catch (err) {
         console.warn('Central database disk write error:', err);
