@@ -39,8 +39,6 @@ import {
   Edit,
 } from 'lucide-react';
 import {
-  generateUniqueFamilyCode,
-  generateUniqueFamilyQrPayload,
   generateProvisionalNic,
   clearAllHouseholdsPermanently,
   recordDeletedId,
@@ -120,7 +118,7 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
     bankBranch: string;
     bankAccountNo: string;
   }>({
-    familyCode: 'FAM-211-101',
+    familyCode: '',
     householdReference: 'HH-5-1-03-01-010-00101',
     applicationReference: `2026${Math.floor(Math.random() * 9000000 + 1000000)}`,
     applicantNameTa: '',
@@ -359,9 +357,8 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
   // Wizard Open
   const handleOpenAddFamilyWizard = () => {
     const targetDiv = '211';
-    const famCode = generateUniqueFamilyCode(targetDiv, households.length + 1);
     setNewHouseholdMeta({
-      familyCode: famCode,
+      familyCode: '',
       householdReference: `HH-5-1-03-01-010-${String(households.length + 1).padStart(5, '0')}`,
       applicationReference: `2026${Math.floor(Math.random() * 9000000 + 1000000)}`,
       applicantNameTa: '',
@@ -387,9 +384,9 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
       return;
     }
 
-    const familyCode = newHouseholdMeta.familyCode.trim().toUpperCase();
+    const familyCode = newHouseholdMeta.familyCode.trim();
     const divisionCode = newHouseholdMeta.divisionCode;
-    const familyQrPayload = generateUniqueFamilyQrPayload(familyCode, divisionCode);
+    const familyQrPayload = familyCode;
 
     // Build temporary beneficiaries for the members to calculate 100-point score
     const createdBeneficiaries: Beneficiary[] = newMembersList.map((m, idx) => {
@@ -1092,12 +1089,12 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
               <div className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">குடும்ப அடையாளக் குறியீடு (Family Code) *</label>
+                    <label className="block font-bold text-slate-700 mb-1">குடும்ப QR அலகுக் குறியீடு (Family QR Code)</label>
                     <input
                       type="text"
-                      required
                       value={newHouseholdMeta.familyCode}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, familyCode: e.target.value.toUpperCase() })}
+                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, familyCode: e.target.value })}
+                      placeholder="CSV-இல் உள்ள குடும்ப QR இலக்கம்"
                       className="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
                     />
                   </div>

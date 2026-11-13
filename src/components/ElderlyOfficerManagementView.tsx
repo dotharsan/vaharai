@@ -228,7 +228,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
     setFormName('');
     setFormNic('');
     setFormDivision(div);
-    setFormFamilyCode(`FAM-${div}-${Math.floor(Math.random() * 800 + 100)}`);
+    setFormFamilyCode('');
     setFormFamilyRelationship('GRANDMOTHER');
     setFormWelfareSchemes(['ELDERLY']);
     setFormPhone('');
@@ -251,7 +251,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
     setFormName(b.nameTa);
     setFormNic(b.nic);
     setFormDivision(b.divisionCode);
-    setFormFamilyCode(b.familyCode || `FAM-${b.divisionCode}-001`);
+    setFormFamilyCode(b.familyQrPayload || b.familyCode || '');
     setFormFamilyRelationship(b.familyRelationship || (b.gender === 'FEMALE' ? 'GRANDMOTHER' : 'GRANDFATHER'));
     setFormWelfareSchemes(b.welfareSchemes && b.welfareSchemes.length > 0 ? b.welfareSchemes : (b.welfareScheme && b.welfareScheme !== 'NONE' ? [b.welfareScheme] : ['ELDERLY']));
     setFormPhone(b.phone || '');
@@ -278,7 +278,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
 
     const cleanNic = formNic.trim() || `TNIC-${formDivision}-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
     const systemId = editingElderly ? editingElderly.id : generateSystemCitizenId(formDivision, beneficiaries.length + 1);
-    const famCode = formFamilyCode.trim() || `FAM-${formDivision}-001`;
+    const famCode = formFamilyCode.trim();
 
     const activeSchemes = formWelfareSchemes.length > 0 ? formWelfareSchemes : (formAllowanceStatus === 'RECEIVING' ? ['ELDERLY' as WelfareScheme] : []);
     const primaryScheme = activeSchemes.length > 0 ? activeSchemes[0] : 'NONE';
@@ -297,8 +297,9 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
       divisionCode: formDivision,
       dsDivisionId: editingElderly?.dsDivisionId || (isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI')),
       familyHead: editingElderly ? editingElderly.familyHead : (formFamilyRelationship === 'HEAD'),
-      householdNo: editingElderly?.householdNo || `HH-${formDivision}-001`,
+      householdNo: editingElderly?.householdNo || famCode || '',
       familyCode: famCode,
+      familyQrPayload: famCode || editingElderly?.familyQrPayload || '',
       familyRelationship: formFamilyRelationship,
       isElderly: true,
       elderlyAllowanceStatus: formAllowanceStatus,
@@ -1167,27 +1168,17 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-blue-950 mb-1">
-                      குடும்ப QR எண் (Family Master Code) *
+                      குடும்ப QR அலகுக் குறியீடு (Family QR Code)
                     </label>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        required
-                        value={formFamilyCode}
-                        onChange={(e) => setFormFamilyCode(e.target.value.trim().toUpperCase())}
-                        placeholder="e.g. FAM-211-102"
-                        className="w-full px-3 py-1.5 border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setFormFamilyCode(`FAM-${formDivision}-${Math.floor(Math.random() * 800 + 100)}`)}
-                        className="px-2.5 py-1 text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg whitespace-nowrap shadow-xs"
-                      >
-                        🎲 புதிய எண்
-                      </button>
-                    </div>
+                    <input
+                      type="text"
+                      value={formFamilyCode}
+                      onChange={(e) => setFormFamilyCode(e.target.value)}
+                      placeholder="CSV-இல் உள்ள குடும்ப QR இலக்கம்"
+                      className="w-full px-3 py-1.5 border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
+                    />
                     <span className="text-[10px] text-blue-800 mt-1 block">
-                      ℹ️ குடும்பத்தின் பொதுவான கிவ் ஆர் இலக்கம். தாய், தந்தை, முதியோர், பிள்ளைகள் அனைவரும் இந்த ஒரே எண்ணையே பகிர்வர்.
+                      ℹ️ CSV-இல் குடும்பத்திற்கு வழங்கப்பட்ட பொதுவான கிவ் ஆர் இலக்கம். தாய், தந்தை, முதியோர், பிள்ளைகள் அனைவரும் இந்த ஒரே எண்ணையே பகிர்வர்.
                     </span>
                   </div>
 

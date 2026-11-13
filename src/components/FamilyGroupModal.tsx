@@ -46,14 +46,17 @@ export const FamilyGroupModal: React.FC<FamilyGroupModalProps> = ({
 
   // All members belonging to this specific family unit
   const members = React.useMemo(() => {
+    const key = familyCode.trim().toUpperCase();
     return allBeneficiaries.filter(
-      (b) => b.familyCode && b.familyCode.toUpperCase() === familyCode.toUpperCase()
+      (b) =>
+        (b.familyCode && b.familyCode.trim().toUpperCase() === key) ||
+        (b.familyQrPayload && b.familyQrPayload.trim().toUpperCase() === key)
     );
   }, [allBeneficiaries, familyCode]);
 
   const divisionCode = members[0]?.divisionCode || '211';
   const division = divisions.find((d) => d.code === divisionCode);
-  const familyQrPayload = members[0]?.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${divisionCode}`;
+  const familyQrPayload = members.find((m) => m.familyQrPayload)?.familyQrPayload || members[0]?.familyCode || familyCode;
 
   useEffect(() => {
     if (familyQrPayload) {

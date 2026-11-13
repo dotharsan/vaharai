@@ -23,14 +23,84 @@ import {
 import { 
   generateSystemCitizenId, 
   generateProvisionalNic, 
-  generateUniqueFamilyCode,
-  generateUniqueFamilyQrPayload, 
   checkDuplicateAssistance,
   calculateAge,
   calculateTenMonthsDate,
   createDefaultMonthlyCollections,
 } from './storage';
 import { parseSriLankanNic } from '../utils/nicParser';
+
+// Shared CSV helper: detect and preserve exact Family QR / Family Code without altering or auto-generating random values
+const findFamilyQrColumnIndex = (headers: string[]): number =>
+  headers.findIndex(
+    (h) =>
+      h === 'family_qr' ||
+      h === 'family_qr_code' ||
+      h === 'family_qr_no' ||
+      h === 'family_qr_number' ||
+      h === 'fam_qr' ||
+      h === 'qr_code' ||
+      h === 'qr' ||
+      h === 'qr_no' ||
+      h === 'master_qr' ||
+      h === 'family_unit_qr' ||
+      h.includes('family_qr') ||
+      h.includes('family qr') ||
+      h.includes('master_qr') ||
+      h.includes('qr_code') ||
+      h.includes('qr code') ||
+      h.includes('கிவ் ஆர்') ||
+      h.includes('குடும்ப qr') ||
+      h.includes('அலகுக் குறியீடு')
+  );
+
+const findFamilyCodeColumnIndex = (headers: string[]): number =>
+  headers.findIndex(
+    (h) =>
+      h === 'family_code' ||
+      h === 'fam_code' ||
+      h === 'family_id' ||
+      h === 'fam_id' ||
+      h === 'family_no' ||
+      h === 'family_number' ||
+      h === 'family_unit' ||
+      h === 'குடும்ப_குறியீடு' ||
+      h === 'குடும்ப குறியீடு' ||
+      h === 'குடும்ப_இலக்கம்' ||
+      h === 'குடும்ப இலக்கம்' ||
+      h === 'குடும்ப_எண்' ||
+      h.includes('family_code') ||
+      h.includes('family_id') ||
+      h.includes('குடும்ப_குறியீடு') ||
+      ((h.includes('family') || h.includes('fam') || h.includes('குடும்ப')) &&
+        !h.includes('head') &&
+        !h.includes('rel') &&
+        !h.includes('qr') &&
+        !h.includes('தலைவர்') &&
+        !h.includes('உறவு'))
+  );
+
+const extractExactFamilyQrAndCode = (
+  row: string[],
+  familyCodeCol: number,
+  familyQrCol: number,
+  fallbackColIdx?: number
+): { familyCode: string; familyQrPayload: string } => {
+  const rawQr = familyQrCol !== -1 ? (row[familyQrCol] || '').trim() : '';
+  const rawCode =
+    familyCodeCol !== -1
+      ? (row[familyCodeCol] || '').trim()
+      : fallbackColIdx !== undefined
+        ? (row[fallbackColIdx] || '').trim()
+        : '';
+
+  const familyQrPayload = rawQr || rawCode || '';
+  let familyCode = rawCode || rawQr || '';
+  if (!rawCode && rawQr.includes('FAM:')) {
+    familyCode = rawQr.split('FAM:')[1].split('|')[0].trim();
+  }
+  return { familyCode, familyQrPayload };
+};
 
 // Normalize date string from DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD to YYYY-MM-DD
 export const normalizeDateString = (dateStr?: string): string => {
@@ -303,7 +373,8 @@ export const parseBeneficiariesFromCsv = (
   // Detect column mapping intelligently (strict ID matching to avoid false-matching Family_ID/GN_ID)
   const colIndex = {
     id: headers.findIndex((h) => h === 'id' || h === 'system_id' || h.includes('system_id') || h.includes('citizen_id') || h === 'system id'),
-    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr' || h.includes('குடும்ப_குறியீடு')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel' || h === 'role' || h.includes('உறவு')),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
@@ -320,7 +391,7 @@ export const parseBeneficiariesFromCsv = (
     notes: headers.findIndex((h) => h.includes('note') || h.includes('remark') || h.includes('குறிப்பு')),
   };
 
-  const hasKnownHeader = colIndex.nic !== -1 || colIndex.id !== -1 || colIndex.nameTa !== -1 || colIndex.familyCode !== -1;
+  const hasKnownHeader = colIndex.nic !== -1 || colIndex.id !== -1 || colIndex.nameTa !== -1 || colIndex.familyCode !== -1 || colIndex.familyQr !== -1;
   const startIndex = hasKnownHeader ? 1 : 0;
 
   for (let i = startIndex; i < rows.length; i++) {
@@ -345,17 +416,18 @@ export const parseBeneficiariesFromCsv = (
     const phone = (colIndex.phone !== -1 ? row[colIndex.phone] : row[6])?.trim() || '';
     const address = (colIndex.address !== -1 ? row[colIndex.address] : row[7])?.trim() || '';
 
-    // Family Code & Relationship
-    let familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : '')?.trim().toUpperCase();
-    if (!familyCode) {
-      familyCode = `FAM-${divisionCode}-${String(Math.floor(Math.random() * 900 + 100))}`;
-    }
+    // Family QR & Code (exact CSV value, never auto-generated)
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
     const familyRelationship = parseRelationshipString(relRaw);
 
     const headVal = colIndex.head !== -1 ? row[colIndex.head] : row[9];
     const familyHead = (headVal || '').toUpperCase() === 'YES' || headVal === '1' || (headVal || '').toUpperCase() === 'TRUE' || familyRelationship === 'HEAD' || familyRelationship === 'FATHER';
-    const householdNo = (colIndex.household !== -1 ? row[colIndex.household] : row[10])?.trim() || `HH-${divisionCode}-${i}`;
+    const householdNo = (colIndex.household !== -1 ? row[colIndex.household] : row[10])?.trim() || '';
     
     // Chronic Illness parsing
     const illnessRaw = ((colIndex.illness !== -1 ? row[colIndex.illness] : row[11]) || '').toUpperCase();
@@ -383,7 +455,6 @@ export const parseBeneficiariesFromCsv = (
 
     const barcode = nic || id;
     const qrPayload = `VHR-DS|ID:${id}|NIC:${nic}|DIV:${divisionCode}|MED:${chronicIllness}|${welfareScheme}`;
-    const familyQrPayload = generateUniqueFamilyQrPayload(familyCode, divisionCode);
 
     // Derive special flags
     const isPregnant = welfareSchemes.includes('PREGNANT_NUTRITION') || notes.includes('கர்ப்பிணி');
@@ -434,7 +505,7 @@ export const exportBeneficiariesToCsv = (items: Beneficiary[]): string => {
   for (const b of items) {
     const row = [
       escapeCsv(b.id),
-      escapeCsv(b.familyCode || `FAM-${b.divisionCode}-001`),
+      escapeCsv(b.familyQrPayload || b.familyCode || ''),
       escapeCsv(b.familyRelationship || (b.familyHead ? 'HEAD' : 'OTHER')),
       escapeCsv(b.nic),
       escapeCsv(b.nameTa),
@@ -698,37 +769,41 @@ export const buildHouseholdsFromBeneficiaries = (
 ): HouseholdData[] => {
   const familyGroups = new Map<string, Beneficiary[]>();
   for (const c of citizens) {
-    const fCode = (c.familyCode || `FAM-${c.divisionCode || '211'}-001`).trim().toUpperCase();
-    const list = familyGroups.get(fCode) || [];
+    const rawFam = (c.familyCode || c.familyQrPayload || '').trim();
+    if (!rawFam) continue;
+    const fKey = rawFam.toUpperCase();
+    const list = familyGroups.get(fKey) || [];
     list.push(c);
-    familyGroups.set(fCode, list);
+    familyGroups.set(fKey, list);
   }
 
   const householdMap = new Map<string, HouseholdData>();
   existingHouseholds.forEach((h) => {
-    const key = (h.familyCode || h.id).trim().toUpperCase();
-    householdMap.set(key, h);
+    const key = (h.familyCode || h.familyQrPayload || h.id || '').trim().toUpperCase();
+    if (key) householdMap.set(key, h);
   });
 
   const now = new Date().toISOString();
 
-  for (const [familyCode, members] of familyGroups.entries()) {
+  for (const [familyKey, members] of familyGroups.entries()) {
     const head =
       members.find((m) => m.familyHead || m.familyRelationship === 'HEAD' || m.familyRelationship === 'FATHER') ||
       members[0];
     if (!head) continue;
 
-    const existing = householdMap.get(familyCode);
+    const exactFamilyCode = (head.familyCode || head.familyQrPayload || familyKey).trim();
+    const exactFamilyQr = (head.familyQrPayload || head.familyCode || exactFamilyCode).trim();
+    const existing = householdMap.get(familyKey);
     const commonAssets = existing?.commonAssets || DEFAULT_CSV_COMMON_ASSETS;
     const score = calculateFamilyPovertyScore(commonAssets, members, DEFAULT_POVERTY_WEIGHTS);
     const hasExtreme = members.some((m) => m.welfareSchemes?.includes('ASWESUMA_EXTREME'));
     const hasPoor = members.some((m) => m.welfareSchemes?.includes('ASWESUMA_POOR'));
 
-    householdMap.set(familyCode, {
-      id: existing?.id || head.householdNo || `HH-${familyCode}`,
-      familyCode,
-      householdReference: existing?.householdReference || head.householdNo || `HH-${familyCode}`,
-      applicationReference: existing?.applicationReference || `CSV-${familyCode}`,
+    householdMap.set(familyKey, {
+      id: existing?.id || head.householdNo || `HH-${exactFamilyCode}`,
+      familyCode: existing?.familyCode || exactFamilyCode,
+      householdReference: existing?.householdReference || head.householdNo || `HH-${exactFamilyCode}`,
+      applicationReference: existing?.applicationReference || `CSV-${exactFamilyCode}`,
       applicantNameTa: existing?.applicantNameTa || head.nameTa,
       applicantNameEn: existing?.applicantNameEn || head.nameEn || head.nameTa,
       applicantNic: existing?.applicantNic || head.nic,
@@ -747,7 +822,7 @@ export const buildHouseholdsFromBeneficiaries = (
       },
       commonAssets,
       totalMembersCount: members.length,
-      familyQrPayload: existing?.familyQrPayload || head.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${head.divisionCode}`,
+      familyQrPayload: existing?.familyQrPayload || exactFamilyQr,
       score100: score.score100,
       priorityRank: score.priorityRank,
       scoreBreakdown: score.breakdown,
@@ -817,7 +892,8 @@ export const parseFamiliesFromCsv = (
 
   const headers = rows[0].map((h) => h.trim().toLowerCase());
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family_code') || h === 'fam_code' || h === 'family_qr' || h.includes('குடும்ப')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel' || h === 'role' || h.includes('உறவு')),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'head_name_tamil' || h === 'name' || h.includes('பெயர்')),
@@ -838,7 +914,12 @@ export const parseFamiliesFromCsv = (
     if (row.length < 3 || !row.some((cell) => cell.trim())) continue;
 
     const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[1])?.trim() || defaultDivisionCode || '211').toUpperCase();
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr,
+      0
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
     const familyRelationship = parseRelationshipString(relRaw);
 
@@ -855,7 +936,7 @@ export const parseFamiliesFromCsv = (
     const gender = genderRaw.startsWith('F') || isFemaleRel ? 'FEMALE' : (resolved.gender || (genderRaw.startsWith('M') ? 'MALE' : 'MALE'));
     const phone = (colIndex.phone !== -1 ? row[colIndex.phone] : row[8])?.trim() || '';
     const address = (colIndex.address !== -1 ? row[colIndex.address] : row[9])?.trim() || `வாகரை (${divisionCode})`;
-    const householdNo = (colIndex.household !== -1 ? row[colIndex.household] : row[2])?.trim() || `HH-${divisionCode}-001`;
+    const householdNo = (colIndex.household !== -1 ? row[colIndex.household] : row[2])?.trim() || '';
 
     const welfareRaw = (colIndex.welfare !== -1 ? row[colIndex.welfare] : '') || '';
     const welfareSchemes = parseWelfareChecklistString(welfareRaw);
@@ -870,8 +951,8 @@ export const parseFamiliesFromCsv = (
     else if (illnessRaw.includes('DIABETES') || illnessRaw.includes('நீரிழிவு')) chronicIllness = 'DIABETES_CHRONIC';
     else if (illnessRaw !== 'NONE' && illnessRaw.length > 2) chronicIllness = 'OTHER_CHRONIC';
 
-    const isHead = familyRelationship === 'HEAD' || familyRelationship === 'FATHER' || (!processedFamilyCodes.has(familyCode) && items.filter(m => m.familyCode === familyCode).length === 0);
-    const familyQrPayload = generateUniqueFamilyQrPayload(familyCode, divisionCode);
+    const famKey = familyCode.toUpperCase();
+    const isHead = familyRelationship === 'HEAD' || familyRelationship === 'FATHER' || (!!famKey && !processedFamilyCodes.has(famKey) && items.filter(m => (m.familyCode || '').toUpperCase() === famKey).length === 0);
     const systemId = ensureUniqueSystemId(undefined, divisionCode, usedIds, existingBeneficiaries.length + items.length + 1);
 
     const isPregnant = welfareSchemes.includes('PREGNANT_NUTRITION') || (row.join(' ').includes('கர்ப்பிணி'));
@@ -915,7 +996,7 @@ export const parseFamiliesFromCsv = (
       updatedAt: new Date().toISOString(),
     });
 
-    processedFamilyCodes.add(familyCode);
+    if (famKey) processedFamilyCodes.add(famKey);
   }
 
   return { items, errors, familyCount: processedFamilyCodes.size };
@@ -969,7 +1050,8 @@ export const parseElderlyFromCsv = (
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel')),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
@@ -994,7 +1076,12 @@ export const parseElderlyFromCsv = (
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
     const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[9])?.trim() || defaultDivisionCode || '211').toUpperCase();
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0])?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr,
+      0
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
     const familyRelationship = parseRelationshipString(relRaw || 'GRANDFATHER');
 
@@ -1050,7 +1137,7 @@ export const parseElderlyFromCsv = (
       address,
       divisionCode,
       familyHead: familyRelationship === 'HEAD' || familyRelationship === 'FATHER',
-      householdNo: `HH-${divisionCode}-001`,
+      householdNo: '',
       familyCode,
       familyRelationship,
       isElderly: true,
@@ -1065,7 +1152,7 @@ export const parseElderlyFromCsv = (
       chronicIllness,
       barcode: nic,
       qrPayload: `ID:${systemId}|NIC:${nic}|DIV:${divisionCode}|FAM:${familyCode}|ROLE:ELDERLY`,
-      familyQrPayload: generateUniqueFamilyQrPayload(familyCode, divisionCode),
+      familyQrPayload,
       notes,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1080,7 +1167,7 @@ export const exportElderlyToCsv = (items: Beneficiary[]): string => {
   for (const b of items) {
     if (!b.isElderly && calculateAge(b.dob) < 60 && b.welfareScheme !== 'ELDERLY') continue;
     lines.push([
-      escapeCsv(b.familyCode || `FAM-${b.divisionCode}-001`),
+      escapeCsv(b.familyQrPayload || b.familyCode || ''),
       escapeCsv(b.familyRelationship || 'GRANDFATHER'),
       escapeCsv(b.nic),
       escapeCsv(b.nameTa),
@@ -1162,7 +1249,8 @@ export const parsePregnantMothersFromCsv = (
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h.includes('rel')),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     name: headers.findIndex((h) => h.includes('name') || h.includes('பெயர்')),
@@ -1188,7 +1276,11 @@ export const parsePregnantMothersFromCsv = (
     const divisionCode = ((colIndex.division !== -1 ? row[colIndex.division] : row[4])?.trim() || defaultDivisionCode || '211').toUpperCase();
     const { nic } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
 
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : '')?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : '';
     const familyRelationship = parseRelationshipString(relRaw || 'MOTHER');
 
@@ -1258,7 +1350,7 @@ export const parsePregnantMothersFromCsv = (
       address: `வாகரை (${divisionCode})`,
       divisionCode,
       familyHead: false,
-      householdNo: `HH-${divisionCode}-001`,
+      householdNo: '',
       familyCode,
       familyRelationship,
       isPregnantMother: true,
@@ -1269,7 +1361,7 @@ export const parsePregnantMothersFromCsv = (
       chronicIllness: 'NONE',
       barcode: nic,
       qrPayload: `ID:${systemId}|NIC:${nic}|DIV:${divisionCode}|FAM:${familyCode}|ROLE:PREGNANT`,
-      familyQrPayload: generateUniqueFamilyQrPayload(familyCode, divisionCode),
+      familyQrPayload,
       notes: `${motherRecord.notes} · முத்திரை: ${stampNo || 'நிறைவு'}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1284,7 +1376,7 @@ export const exportPregnantMothersToCsv = (mothers: PregnantMotherRecord[]): str
   const lines = [PREGNANT_MOTHERS_CSV_HEADERS.join(',')];
   for (const m of mothers) {
     lines.push([
-      escapeCsv(m.familyCode || `FAM-${m.divisionCode}-001`),
+      escapeCsv(m.familyCode || ''),
       escapeCsv(m.familyRelationship || 'MOTHER'),
       escapeCsv(m.nic),
       escapeCsv(m.name),
@@ -1346,7 +1438,8 @@ export const parseDisabilityFromCsv = (
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel'),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
@@ -1367,7 +1460,12 @@ export const parseDisabilityFromCsv = (
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0];
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr,
+      0
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
     const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
     const nameTaRaw = colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[3];
@@ -1383,7 +1481,6 @@ export const parseDisabilityFromCsv = (
     const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[14];
 
     const divisionCode = (divisionRaw?.trim() || defaultDivisionCode || '211').toUpperCase();
-    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
     const familyRelationship = parseRelationshipString(relRaw || 'OTHER');
 
     const { nic, isProvisional } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
@@ -1416,7 +1513,7 @@ export const parseDisabilityFromCsv = (
       address,
       divisionCode,
       familyHead: familyRelationship === 'HEAD' || familyRelationship === 'FATHER',
-      householdNo: `HH-${divisionCode}-001`,
+      householdNo: '',
       familyCode,
       familyRelationship,
       isPersonWithDisability: true,
@@ -1430,7 +1527,7 @@ export const parseDisabilityFromCsv = (
       chronicIllness: 'DISABILITY_PHYSICAL',
       barcode: nic,
       qrPayload: `ID:${systemId}|NIC:${nic}|DIV:${divisionCode}|FAM:${familyCode}|ROLE:DISABILITY`,
-      familyQrPayload: generateUniqueFamilyQrPayload(familyCode, divisionCode),
+      familyQrPayload,
       notes,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1445,7 +1542,7 @@ export const exportDisabilityToCsv = (items: Beneficiary[]): string => {
   for (const b of items) {
     if (!b.isPersonWithDisability && b.chronicIllness !== 'DISABILITY_PHYSICAL' && b.welfareScheme !== 'DISABILITY') continue;
     lines.push([
-      escapeCsv(b.familyCode || `FAM-${b.divisionCode}-001`),
+      escapeCsv(b.familyQrPayload || b.familyCode || ''),
       escapeCsv(b.familyRelationship || 'CHILD'),
       escapeCsv(b.nic),
       escapeCsv(b.nameTa),
@@ -1509,7 +1606,8 @@ export const parseAswesumaFromCsv = (
   const headers = rows[0].map((h) => h.trim().toLowerCase());
 
   const colIndex = {
-    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     rel: headers.findIndex((h) => h.includes('relationship') || h === 'rel'),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     nameTa: headers.findIndex((h) => h.includes('name_tamil') || h.includes('tamil') || h === 'name' || h.includes('பெயர்')),
@@ -1529,7 +1627,12 @@ export const parseAswesumaFromCsv = (
     const row = rows[i];
     if (row.length < 3 || !row.some((c) => c.trim())) continue;
 
-    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[0];
+    const { familyCode, familyQrPayload } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr,
+      0
+    );
     const relRaw = colIndex.rel !== -1 ? row[colIndex.rel] : row[1];
     const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
     const nameTaRaw = colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[3];
@@ -1545,7 +1648,6 @@ export const parseAswesumaFromCsv = (
     const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[13];
 
     const divisionCode = (divisionRaw?.trim() || defaultDivisionCode || '211').toUpperCase();
-    const familyCode = familyCodeRaw?.trim().toUpperCase() || `FAM-${divisionCode}-${String(i).padStart(3, '0')}`;
     const familyRelationship = parseRelationshipString(relRaw || 'HEAD');
 
     const { nic, isProvisional } = ensureUniqueProvisionalNic(nicRaw, divisionCode, usedNics);
@@ -1557,7 +1659,7 @@ export const parseAswesumaFromCsv = (
     const gender = (genderRaw?.trim().toUpperCase() === 'FEMALE' || familyRelationship === 'MOTHER' || familyRelationship === 'WIFE') ? 'FEMALE' : (resolvedAsw.gender || 'MALE');
     const phone = phoneRaw?.trim() || '';
     const address = addressRaw?.trim() || `வாகரை (${divisionCode})`;
-    const householdNo = householdRaw?.trim() || `HH-${divisionCode}-001`;
+    const householdNo = householdRaw?.trim() || '';
 
     const cat = (categoryRaw || '').toUpperCase();
     let primaryScheme: WelfareScheme = 'ASWESUMA_POOR';
@@ -1592,7 +1694,7 @@ export const parseAswesumaFromCsv = (
       chronicIllness: 'NONE',
       barcode: nic,
       qrPayload: `ID:${systemId}|NIC:${nic}|DIV:${divisionCode}|FAM:${familyCode}|SCHEME:${primaryScheme}`,
-      familyQrPayload: generateUniqueFamilyQrPayload(familyCode, divisionCode),
+      familyQrPayload,
       notes,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1608,7 +1710,7 @@ export const exportAswesumaToCsv = (items: Beneficiary[]): string => {
     if (!b.welfareScheme.startsWith('ASWESUMA') && !b.welfareSchemes?.some((s) => s.startsWith('ASWESUMA'))) continue;
     const aswesumaCat = b.welfareSchemes?.find((s) => s.startsWith('ASWESUMA')) || b.welfareScheme;
     lines.push([
-      escapeCsv(b.familyCode || `FAM-${b.divisionCode}-001`),
+      escapeCsv(b.familyQrPayload || b.familyCode || ''),
       escapeCsv(b.familyRelationship || 'HEAD'),
       escapeCsv(b.nic),
       escapeCsv(b.nameTa),
@@ -1685,7 +1787,8 @@ export const parseAssistanceFromCsv = (
 
   const colIndex = {
     aidId: headers.findIndex((h) => h === 'aid_id' || h === 'id' || h.includes('aid_id')),
-    familyCode: headers.findIndex((h) => h.includes('family') || h.includes('fam')),
+    familyQr: findFamilyQrColumnIndex(headers),
+    familyCode: findFamilyCodeColumnIndex(headers),
     nic: headers.findIndex((h) => h.includes('nic') || h.includes('அடையாள')),
     name: headers.findIndex((h) => h.includes('name') || h.includes('பெயர்')),
     division: headers.findIndex((h) => h.includes('division') || h === 'gn' || h.includes('பிரிவு')),
@@ -1703,7 +1806,12 @@ export const parseAssistanceFromCsv = (
     if (row.length < 3 || !row.some((cell) => cell.trim())) continue;
 
     const aidIdRaw = colIndex.aidId !== -1 ? row[colIndex.aidId] : row[0];
-    const familyCodeRaw = colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[1];
+    const { familyCode, familyQrPayload: csvFamilyQr } = extractExactFamilyQrAndCode(
+      row,
+      colIndex.familyCode,
+      colIndex.familyQr,
+      1
+    );
     const nicRaw = colIndex.nic !== -1 ? row[colIndex.nic] : row[2];
     const nameRaw = colIndex.name !== -1 ? row[colIndex.name] : row[3];
     const divisionRaw = colIndex.division !== -1 ? row[colIndex.division] : row[4];
@@ -1715,7 +1823,6 @@ export const parseAssistanceFromCsv = (
     const officerRaw = colIndex.officer !== -1 ? row[colIndex.officer] : row[10];
     const notesRaw = colIndex.notes !== -1 ? row[colIndex.notes] : row[11];
 
-    const familyCode = familyCodeRaw?.trim().toUpperCase() || '';
     const nic = nicRaw?.trim() || '';
     const divisionCode = (divisionRaw?.trim() || batchInfo?.defaultDivisionCode || '211').toUpperCase();
     const rowDate = normalizeDateString(dateRaw?.trim());
@@ -1728,11 +1835,14 @@ export const parseAssistanceFromCsv = (
 
     // Lookup beneficiary for auto-completion if name not given
     const matchedBeneficiary = existingBeneficiaries.find(
-      (b) => (familyCode && b.familyCode?.toUpperCase() === familyCode) || (nic && b.nic === nic)
+      (b) =>
+        (csvFamilyQr && b.familyQrPayload?.toUpperCase() === csvFamilyQr.toUpperCase()) ||
+        (familyCode && b.familyCode?.toUpperCase() === familyCode.toUpperCase()) ||
+        (nic && b.nic === nic)
     );
 
     const beneficiaryName = nameRaw?.trim() || matchedBeneficiary?.nameTa || matchedBeneficiary?.nameEn || 'பயனாளி';
-    const familyQrPayload = matchedBeneficiary?.familyQrPayload || generateUniqueFamilyQrPayload(familyCode, divisionCode);
+    const familyQrPayload = csvFamilyQr || matchedBeneficiary?.familyQrPayload || familyCode || '';
 
     // Map aidCategory
     const rawCat = (categoryRaw || '').trim().toUpperCase();
@@ -1767,7 +1877,7 @@ export const parseAssistanceFromCsv = (
 
     // Run Duplicate Prevention Engine on this row, checking against the actual distribution date!
     const duplicateCheck = checkDuplicateAssistance(
-      familyCode,
+      familyCode || matchedBeneficiary?.familyCode || '',
       nic,
       aidCategory,
       [...existingAssistance, ...validRecords],
@@ -1776,7 +1886,7 @@ export const parseAssistanceFromCsv = (
 
     const record: AssistanceRecord = {
       id,
-      familyCode: familyCode || matchedBeneficiary?.familyCode || `FAM-${divisionCode}-001`,
+      familyCode: familyCode || matchedBeneficiary?.familyCode || '',
       familyQrPayload,
       beneficiaryNic: nic || matchedBeneficiary?.nic || '',
       beneficiaryName,
@@ -1838,7 +1948,7 @@ export const exportFamiliesToCsv = (beneficiaries: Beneficiary[]): string => {
 
   for (const b of sorted) {
     lines.push([
-      escapeCsv(b.familyCode || `FAM-${b.divisionCode}-001`),
+      escapeCsv(b.familyQrPayload || b.familyCode || ''),
       escapeCsv(b.familyRelationship || (b.familyHead ? 'HEAD' : 'OTHER')),
       escapeCsv(b.nic),
       escapeCsv(b.nameTa),
@@ -1956,7 +2066,7 @@ export const parseLandFromCsv = (
     const ownerNameTa = (colIndex.nameTa !== -1 ? row[colIndex.nameTa] : row[7])?.trim() || 'காணி உரிமையாளர்';
     const ownerNameEn = (colIndex.nameEn !== -1 ? row[colIndex.nameEn] : row[8])?.trim() || ownerNameTa;
     const ownerPhone = (colIndex.phone !== -1 ? row[colIndex.phone] : row[9])?.trim() || '';
-    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[10])?.trim().toUpperCase() || `FAM-${divisionCode}-001`;
+    const familyCode = (colIndex.familyCode !== -1 ? row[colIndex.familyCode] : row[10])?.trim() || '';
 
     const statusRaw = ((colIndex.status !== -1 ? row[colIndex.status] : row[11]) || '').toUpperCase();
     let permitStatus: LandPermitStatus = 'PERMIT_ISSUED';

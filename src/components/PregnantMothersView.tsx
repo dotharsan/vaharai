@@ -292,7 +292,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     setFormName('');
     setFormNic('');
     setFormDivision(div);
-    setFormFamilyCode(`FAM-${div}-${Math.floor(Math.random() * 800 + 100)}`);
+    setFormFamilyCode('');
     setFormFamilyRelationship('MOTHER');
     setFormWelfareSchemes(['PREGNANT_NUTRITION']);
     setFormPhone('');
@@ -327,7 +327,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     const cleanStampNo = formStampNo.trim();
     const hasStamp = !!cleanStampNo;
     const initialStatus = formIsPastCompleted ? 'COMPLETED' : hasStamp ? 'ACTIVE_COLLECTING' : 'WAITING_STAMP';
-    const famCode = formFamilyCode.trim() || `FAM-${formDivision}-001`;
+    const famCode = formFamilyCode.trim();
 
     const newRecord: PregnantMotherRecord = {
       id: `MAT-${formDivision}-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
@@ -1230,27 +1230,17 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-blue-950 mb-1">
-                      குடும்ப QR எண் (Family Master Code) *
+                      குடும்ப QR அலகுக் குறியீடு (Family QR Code)
                     </label>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        required
-                        value={formFamilyCode}
-                        onChange={(e) => setFormFamilyCode(e.target.value.trim().toUpperCase())}
-                        placeholder="e.g. FAM-211-102"
-                        className="w-full px-3 py-1.5 border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setFormFamilyCode(`FAM-${formDivision}-${Math.floor(Math.random() * 800 + 100)}`)}
-                        className="px-2.5 py-1 text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg whitespace-nowrap shadow-xs"
-                      >
-                        🎲 புதிய எண்
-                      </button>
-                    </div>
+                    <input
+                      type="text"
+                      value={formFamilyCode}
+                      onChange={(e) => setFormFamilyCode(e.target.value)}
+                      placeholder="CSV-இல் உள்ள குடும்ப QR இலக்கம்"
+                      className="w-full px-3 py-1.5 border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
+                    />
                     <span className="text-[10px] text-blue-800 mt-1 block">
-                      ℹ️ குடும்பத்தின் பொதுவான கிவ் ஆர் இலக்கம். தாய், தந்தை, பிள்ளைகள் அனைவரும் இந்த ஒரே எண்ணையே பகிர்வர்.
+                      ℹ️ CSV-இல் குடும்பத்திற்கு வழங்கப்பட்ட பொதுவான கிவ் ஆர் இலக்கம். தாய், தந்தை, பிள்ளைகள் அனைவரும் இந்த ஒரே எண்ணையே பகிர்வர்.
                     </span>
                   </div>
 

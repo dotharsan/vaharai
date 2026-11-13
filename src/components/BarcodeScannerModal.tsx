@@ -36,7 +36,20 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       return;
     }
 
-    // 1. Check if input is a Family Master QR payload or Family Code
+    // 1. Check if input matches any exact Family QR payload or Family Code directly
+    const directQrMembers = beneficiaries.filter(
+      (b) =>
+        (b.familyQrPayload && b.familyQrPayload.trim().toLowerCase() === q) ||
+        (b.familyCode && b.familyCode.trim().toLowerCase() === q)
+    );
+    if (directQrMembers.length > 0) {
+      const famLabel = directQrMembers[0].familyCode || directQrMembers[0].familyQrPayload || rawQ;
+      setMatchedFamily({ familyCode: famLabel, members: directQrMembers });
+      setMatched(directQrMembers[0]);
+      setErrorMsg('');
+      return;
+    }
+
     let familyCodeTarget = '';
     if (rawQ.includes('VHR-FAMILY')) {
       const match = rawQ.match(/FAM:([^|]+)/);
@@ -65,6 +78,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         b.barcode.toLowerCase() === q ||
         b.nic.toLowerCase() === q ||
         b.id.toLowerCase() === q ||
+        (b.familyQrPayload && b.familyQrPayload.toLowerCase() === q) ||
         (b.familyCode && b.familyCode.toLowerCase() === q) ||
         b.nameEn.toLowerCase().includes(q) ||
         b.nameTa.toLowerCase().includes(q)
@@ -72,11 +86,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
     if (found) {
       setMatched(found);
-      // Check if this citizen has other family members linked under same Family Code
-      if (found.familyCode) {
-        const related = beneficiaries.filter((b) => b.familyCode === found.familyCode);
+      // Check if this citizen has other family members linked under same Family QR / Code
+      const linkKey = (found.familyQrPayload || found.familyCode || '').trim().toUpperCase();
+      if (linkKey) {
+        const related = beneficiaries.filter(
+          (b) => (b.familyQrPayload || b.familyCode || '').trim().toUpperCase() === linkKey
+        );
         if (related.length > 1) {
-          setMatchedFamily({ familyCode: found.familyCode, members: related });
+          setMatchedFamily({ familyCode: found.familyCode || found.familyQrPayload || linkKey, members: related });
         } else {
           setMatchedFamily(null);
         }

@@ -230,7 +230,7 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
       setCitizenNameEn(matched.nameEn || '');
       setCitizenPhone(matched.phone || '');
       setCitizenAddress(matched.address || '');
-      setCitizenFamilyCode(matched.familyCode || matched.householdNo || '');
+      setCitizenFamilyCode(matched.familyQrPayload || matched.familyCode || matched.householdNo || '');
       setSelectedDivision(matched.divisionCode || '211');
       setIsPregnantMother(!!matched.isPregnantMother);
       setIsPersonWithDisability(!!matched.isPersonWithDisability);
@@ -282,7 +282,7 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
       setCitizenNic(effectiveNic);
     }
 
-    const effectiveFamilyCode = citizenFamilyCode.trim() || `FAM-${selectedDivision}-${Math.floor(Math.random() * 900 + 100)}`;
+    const effectiveFamilyCode = citizenFamilyCode.trim();
     const systemId = generateSystemCitizenId(selectedDivision, beneficiaries.length + 1);
 
     // Check if citizen exists
@@ -295,6 +295,8 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
       // Update existing citizen record
       const existing = beneficiaries[existingIndex];
       const parsedNic = parseSriLankanNic(effectiveNic);
+      const preservedFamilyCode = effectiveFamilyCode || existing.familyCode || '';
+      const preservedFamilyQr = effectiveFamilyCode || existing.familyQrPayload || existing.familyCode || '';
       const updatedItem: Beneficiary = {
         ...existing,
         nameTa: citizenName.trim(),
@@ -302,7 +304,8 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
         phone: citizenPhone.trim() || existing.phone,
         address: citizenAddress.trim() || existing.address,
         divisionCode: selectedDivision,
-        familyCode: effectiveFamilyCode,
+        familyCode: preservedFamilyCode,
+        familyQrPayload: preservedFamilyQr,
         dob: (existing.dob && existing.dob !== '1995-01-01' && existing.dob !== '1990-01-01')
           ? existing.dob
           : (parsedNic.isValid && parsedNic.dob ? parsedNic.dob : existing.dob || '1995-01-01'),
@@ -337,7 +340,7 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
         address: citizenAddress.trim() || `வாகரை (${selectedDivision})`,
         divisionCode: selectedDivision,
         familyHead: true,
-        householdNo: `HH-${selectedDivision}-001`,
+        householdNo: effectiveFamilyCode || '',
         familyCode: effectiveFamilyCode,
         familyRelationship: isPregnantMother ? 'MOTHER' : 'HEAD',
         isPregnantMother,
@@ -351,7 +354,7 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
         chronicIllness: isPersonWithDisability ? 'DISABILITY_PHYSICAL' : 'NONE',
         barcode: effectiveNic,
         qrPayload: `ID:${systemId}|NIC:${effectiveNic}|DIV:${selectedDivision}`,
-        familyQrPayload: `VHR-FAMILY|FAM:${effectiveFamilyCode}|DIV:${selectedDivision}`,
+        familyQrPayload: effectiveFamilyCode,
         notes: `வரவேற்பகத்தில் பதிவு செய்யப்பட்டது (${currentUser?.name || 'Reception'})`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -1016,7 +1019,7 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. FAM-211-042"
+                  placeholder={lang === 'ta' ? 'CSV-இல் உள்ள குடும்ப QR இலக்கம்' : 'Family QR from CSV'}
                   value={citizenFamilyCode}
                   onChange={(e) => setCitizenFamilyCode(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg font-mono font-bold text-slate-900"

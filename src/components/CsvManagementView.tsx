@@ -200,11 +200,12 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
   const [familySearchQuery, setFamilySearchQuery] = useState('');
   const [familyDivisionFilter, setFamilyDivisionFilter] = useState('ALL');
 
-  // Group all citizens by Family Code for the Connected Family Units Visualizer
+  // Group all citizens by Family QR / Family Code for the Connected Family Units Visualizer
   const familyGroups = useMemo(() => {
     const map = new Map<string, Beneficiary[]>();
     for (const b of beneficiaries) {
-      const code = b.familyCode?.trim() || `FAM-${b.divisionCode}-001`;
+      const code = (b.familyQrPayload || b.familyCode || '').trim();
+      if (!code) continue;
       const list = map.get(code) || [];
       list.push(b);
       map.set(code, list);

@@ -11,7 +11,6 @@ import {
 } from '../services/csv';
 import {
   checkDuplicateAssistance,
-  generateUniqueFamilyQrPayload,
   clearAllAssistanceRecords,
   clearAllAssistanceRecordsPermanently,
   recordDeletedId,
@@ -290,14 +289,16 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
       return;
     }
 
-    // Match familyCode directly, or search beneficiary by NIC / Name / QR
+    // Match familyQrPayload or familyCode directly, or search beneficiary by NIC / Name / QR
     let targetFamilyCode = '';
     const directFamilyMatch = beneficiaries.find(
-      (b) => b.familyCode && b.familyCode.toUpperCase() === q
+      (b) =>
+        (b.familyQrPayload && b.familyQrPayload.toUpperCase() === q) ||
+        (b.familyCode && b.familyCode.toUpperCase() === q)
     );
 
-    if (directFamilyMatch && directFamilyMatch.familyCode) {
-      targetFamilyCode = directFamilyMatch.familyCode;
+    if (directFamilyMatch) {
+      targetFamilyCode = directFamilyMatch.familyCode || directFamilyMatch.familyQrPayload || '';
     } else {
       const citizenMatch = beneficiaries.find(
         (b) =>
@@ -307,14 +308,17 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
           b.nameTa.toLowerCase().includes(query.toLowerCase()) ||
           b.nameEn.toLowerCase().includes(query.toLowerCase())
       );
-      if (citizenMatch && citizenMatch.familyCode) {
-        targetFamilyCode = citizenMatch.familyCode;
+      if (citizenMatch) {
+        targetFamilyCode = citizenMatch.familyCode || citizenMatch.familyQrPayload || '';
       }
     }
 
     if (targetFamilyCode) {
+      const key = targetFamilyCode.toUpperCase();
       const members = beneficiaries.filter(
-        (b) => (b.familyCode || '').toUpperCase() === targetFamilyCode.toUpperCase()
+        (b) =>
+          (b.familyCode || '').toUpperCase() === key ||
+          (b.familyQrPayload || '').toUpperCase() === key
       );
       const head = members.find((m) => m.familyHead || m.familyRelationship === 'HEAD') || members[0];
       setSelectedFamily({ familyCode: targetFamilyCode, members, head });
@@ -339,7 +343,7 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
     if (!selectedFamily) return;
 
     const head = selectedFamily.head || selectedFamily.members[0];
-    const uniqueQr = head.familyQrPayload || generateUniqueFamilyQrPayload(selectedFamily.familyCode, head.divisionCode);
+    const uniqueQr = head.familyQrPayload || head.familyCode || selectedFamily.familyCode;
     const newId = `AID-${new Date().getFullYear()}-${String(assistanceRecords.length + 1).padStart(4, '0')}`;
 
     const authRemark = isPasswordAuthorized
@@ -800,7 +804,7 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
                         {lang === 'ta' ? 'தனித்துவமான குடும்ப QR குறியீடு' : 'Strictly Unique Family Master QR'}
                       </div>
                       <div className="text-[10px] font-mono text-slate-600 truncate max-w-[220px]">
-                        {selectedFamily.head?.familyQrPayload || `VHR-FAMILY|FAM:${selectedFamily.familyCode}`}
+                        {selectedFamily.head?.familyQrPayload || selectedFamily.head?.familyCode || selectedFamily.familyCode}
                       </div>
                     </div>
                   </div>
@@ -1122,8 +1126,8 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
                     ? 'முதலில் மாதிரியைத் தரவிறக்கம் செய்து நிரப்பி அப்லோட் செய்க. ஒரே குடும்பத்திற்கே தொடர்ச்சியான உதவிகள் கிடைப்பதை இந்த முறைமை தானாகக் கண்டறிந்து தடுக்கும்.'
                     : 'Download the sample template, populate your distribution records, and upload. The system automatically detects and prevents duplicate continuous relief.'
                   : lang === 'ta'
-                  ? 'குடும்பப் பதிவு மாதிரியைத் தரவிறக்கம் செய்து குடும்பத் தலைவர், உறுப்பினர் எண்ணிக்கை மற்றும் விபரங்களை உள்ளிட்டு அப்லோட் செய்க. ஒவ்வொரு குடும்பத்திற்கும் தனித்துவமான QR தானாக உருவாகும்.'
-                  : 'Download family model, enter family head and household members. A unique Family QR code is automatically generated for every family.'}
+                  ? 'குடும்பப் பதிவு மாதிரியைத் தரவிறக்கம் செய்து குடும்பத் தலைவர், உறுப்பினர் எண்ணிக்கை மற்றும் CSV-இல் வழங்கப்பட்ட பொதுவான குடும்ப QR குறியீட்டை உள்ளிட்டு அப்லோட் செய்க.'
+                  : 'Download family model, enter family head, members, and your exact unique Family QR code supplied in the CSV.'}
               </p>
             </div>
 

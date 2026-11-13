@@ -14,8 +14,6 @@ import { parseSriLankanNic } from '../utils/nicParser';
 import {
   calculateAge,
   generateSystemCitizenId,
-  generateUniqueFamilyCode,
-  generateUniqueFamilyQrPayload,
   deleteSingleBeneficiary,
   recordDeletedId,
   saveBeneficiaries,
@@ -95,13 +93,9 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   // Auto-calculated from NIC
   const nicParsed = useMemo(() => parseSriLankanNic(formNic), [formNic]);
 
-  // When division changes in form, auto-suggest family QR if empty
+  // When division changes in form, keep user's entered Family QR untouched
   const handleDivisionChange = (div: string) => {
     setFormDivision(div);
-    if (!formFamilyQr.trim()) {
-      const famCode = generateUniqueFamilyCode(div, Math.floor(Math.random() * 800 + 100));
-      setFormFamilyQr(generateUniqueFamilyQrPayload(famCode, div));
-    }
   };
 
   const handleToggleWelfareScheme = (scheme: WelfareScheme) => {
@@ -116,9 +110,8 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
 
   const handleOpenAddModal = () => {
     const div = isDistrictAdmin ? 'DISTRICT_HQ' : '211';
-    const famCode = generateUniqueFamilyCode(div, Math.floor(Math.random() * 800 + 100));
     setFormDivision(div);
-    setFormFamilyQr(generateUniqueFamilyQrPayload(famCode, div));
+    setFormFamilyQr('');
     setFormFamilyRelationship('SON');
     setFormWelfareSchemes(['DISABILITY']);
     setFormName('');
@@ -232,9 +225,10 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
     }
 
     const cleanNic = formNic.trim() || `TNIC-${formDivision}-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
-    const effectiveFamCode = formFamilyQr.includes('FAM:')
-      ? formFamilyQr.split('FAM:')[1].split('|')[0]
-      : generateUniqueFamilyCode(formDivision, Math.floor(Math.random() * 800 + 100));
+    const exactFamilyQr = formFamilyQr.trim();
+    const effectiveFamCode = exactFamilyQr.includes('FAM:')
+      ? exactFamilyQr.split('FAM:')[1].split('|')[0].trim()
+      : exactFamilyQr;
 
     const dob = nicParsed.isValid && nicParsed.dob ? nicParsed.dob : '1995-01-01';
     const gender = nicParsed.isValid && nicParsed.gender ? nicParsed.gender : 'MALE';
@@ -256,7 +250,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       divisionCode: formDivision,
       dsDivisionId: isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI'),
       familyHead: formFamilyRelationship === 'HEAD',
-      householdNo: `HH-${formDivision}-${Math.floor(Math.random() * 900 + 100)}`,
+      householdNo: effectiveFamCode || '',
       familyCode: effectiveFamCode,
       familyRelationship: formFamilyRelationship,
       isPersonWithDisability: true,
@@ -270,7 +264,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       chronicIllness: 'DISABILITY_PHYSICAL',
       barcode: cleanNic,
       qrPayload: `ID:${systemId}|NIC:${cleanNic}|DISABILITY|NATURE:${formNature}|CAUSE:${formCause}`,
-      familyQrPayload: formFamilyQr.trim() || generateUniqueFamilyQrPayload(effectiveFamCode, formDivision),
+      familyQrPayload: exactFamilyQr,
       notes: formNotes.trim() ? `[அங்கவீனர் பதிவு] ${formNotes.trim()}` : `[அங்கவீனர் பதிவு: ${formNature} - ${formCause}]`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -344,7 +338,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
         const dob = parsed.isValid && parsed.dob ? parsed.dob : '1990-01-01';
         const gender = parsed.isValid && parsed.gender ? parsed.gender : 'MALE';
         const systemId = generateSystemCitizenId(divisionCode, beneficiaries.length + newItems.length + 1);
-        const famCode = qrCode.includes('FAM:') ? qrCode.split('FAM:')[1].split('|')[0] : generateUniqueFamilyCode(divisionCode, i + 1);
+        const famCode = qrCode.includes('FAM:') ? qrCode.split('FAM:')[1].split('|')[0].trim() : qrCode;
 
         newItems.push({
           id: systemId,
@@ -358,7 +352,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
           address,
           divisionCode,
           familyHead: false,
-          householdNo: `HH-${divisionCode}-${famCode}`,
+          householdNo: famCode || '',
           familyCode: famCode,
           isPersonWithDisability: true,
           disabilityType: disabilityNature,
@@ -370,7 +364,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
           chronicIllness: 'DISABILITY_PHYSICAL',
           barcode: nic || systemId,
           qrPayload: `ID:${systemId}|NIC:${nic}|DISABILITY|${disabilityNature}|${disabilityCause}`,
-          familyQrPayload: qrCode || generateUniqueFamilyQrPayload(famCode, divisionCode),
+          familyQrPayload: qrCode,
           notes: notes ? `[CSV மாற்றுத்திறனாளி பதிவு] ${notes}` : `[CSV மாற்றுத்திறனாளி பதிவு: ${disabilityNature}]`,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -972,34 +966,21 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
                 <div className="flex items-center justify-between">
                   <label className="block text-[11px] font-bold text-blue-950 flex items-center gap-1.5">
                     <span>👨‍👩‍👧‍👦</span>
-                    <span>கிவ் ஆர் குறியீடு / குடும்ப அலகு QR (Family QR Payload) *</span>
+                    <span>கிவ் ஆர் குறியீடு / குடும்ப அலகு QR (Family QR Code)</span>
                   </label>
                   <span className="text-[10px] bg-blue-200 text-blue-900 font-mono font-bold px-2 py-0.5 rounded">
                     பொது அலகு
                   </span>
                 </div>
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    required
-                    placeholder="VHR-FAMILY|FAM:FAM-211-042|DIV:211|..."
-                    value={formFamilyQr}
-                    onChange={(e) => setFormFamilyQr(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-blue-300 rounded-lg font-mono bg-white focus:ring-2 focus:ring-blue-600 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const famCode = generateUniqueFamilyCode(formDivision, Math.floor(Math.random() * 800 + 100));
-                      setFormFamilyQr(generateUniqueFamilyQrPayload(famCode, formDivision));
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg whitespace-nowrap shadow-xs"
-                  >
-                    🎲 புதிய QR
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  placeholder="CSV-இல் குடும்பத்திற்கு வழங்கப்பட்ட QR இலக்கம்"
+                  value={formFamilyQr}
+                  onChange={(e) => setFormFamilyQr(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-blue-300 rounded-lg font-mono bg-white focus:ring-2 focus:ring-blue-600 focus:outline-none"
+                />
                 <span className="text-[10px] text-blue-700 block">
-                  இப்பிரதேச செயலகத்தினால் குடும்ப அலகிற்கு உருவாக்கப்பட்ட பொதுவான குடும்ப QR குறியீடு.
+                  CSV-இல் ஒவ்வொரு குடும்பத்திற்கும் வழங்கப்பட்ட தனித்துவமான பொது குடும்ப QR குறியீடு (தானாக உருவாக்கப்படாது).
                 </span>
 
                 <div>

@@ -242,15 +242,13 @@ export const generateProvisionalNic = (divisionCode: string = '211'): string => 
   return `TNIC-${cleanDiv}-${year}-${seqPart}${randomSuffix}`;
 };
 
-// Strictly unique Family Code & Master QR Payload generator (Requirement 02)
-export const generateUniqueFamilyCode = (divisionCode: string = '211', count: number = 1): string => {
-  const seq = String(count).padStart(3, '0');
-  return `FAM-${divisionCode}-${seq}`;
+// Family Code & Master QR Payload helpers: preserve exact immutable values provided by user/CSV without random alteration
+export const generateUniqueFamilyCode = (_divisionCode: string = '211', _count: number = 1): string => {
+  return '';
 };
 
-export const generateUniqueFamilyQrPayload = (familyCode: string, divisionCode: string = '211'): string => {
-  const salt = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `VHR-FAMILY|FAM:${familyCode}|DIV:${divisionCode}|UID:${familyCode}-${salt}`;
+export const generateUniqueFamilyQrPayload = (familyCode: string, _divisionCode: string = '211'): string => {
+  return (familyCode || '').trim();
 };
 
 // 16 Official GN Divisions in Koralaipattu North (Vaharai) + General Division option + Starter GN Divisions for Batticaloa
@@ -971,8 +969,10 @@ export const loadBeneficiaries = (): Beneficiary[] => {
       }
     }
     const cleanDiv = (b.divisionCode || '211').trim().toUpperCase();
-    const familyCode = b.familyCode || (b.householdNo ? `FAM-${b.householdNo.replace(/^HH-/, '')}` : `FAM-${cleanDiv}-001`);
-    const familyQrPayload = b.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${cleanDiv}`;
+    const rawFamilyQr = (b.familyQrPayload || '').trim();
+    const rawFamilyCode = (b.familyCode || '').trim();
+    const familyCode = rawFamilyCode || rawFamilyQr;
+    const familyQrPayload = rawFamilyQr || rawFamilyCode;
     return {
       ...b,
       divisionCode: cleanDiv,

@@ -271,7 +271,6 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
     setIsNewRecord(true);
     const targetDiv = isGramaNiladhari ? officerDivision : '211';
     const autoSystemId = generateSystemCitizenId(targetDiv, beneficiaries.length + 1);
-    const defaultFamCode = `FAM-${targetDiv}-${Math.floor(Math.random() * 800 + 100)}`;
 
     setFormData({
       id: autoSystemId,
@@ -285,9 +284,10 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
       address: '',
       divisionCode: targetDiv,
       familyHead: true,
-      familyCode: defaultFamCode,
+      familyCode: '',
+      familyQrPayload: '',
       familyRelationship: 'HEAD',
-      householdNo: `HH-${targetDiv}-${Math.floor(Math.random() * 900 + 100)}`,
+      householdNo: '',
       welfareScheme: 'NONE',
       welfareSchemes: [],
       welfareStatus: 'ACTIVE',
@@ -305,7 +305,8 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
 
     setFormData({
       ...b,
-      familyCode: b.familyCode || (b.householdNo ? `FAM-${b.householdNo.replace(/^HH-/, '')}` : `FAM-${b.divisionCode}-001`),
+      familyCode: b.familyCode || b.familyQrPayload || '',
+      familyQrPayload: b.familyQrPayload || b.familyCode || '',
       familyRelationship: b.familyRelationship || (b.familyHead ? 'HEAD' : 'OTHER'),
       welfareSchemes: currentSchemes,
       welfareScheme: b.welfareScheme || (currentSchemes[0] || 'NONE'),
@@ -369,8 +370,8 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
 
     const barcode = nic || id;
     const manualQr = formData.manualQrCode?.trim();
-    const familyCode = formData.familyCode?.trim() || (formData.householdNo ? `FAM-${formData.householdNo.replace(/^HH-/, '')}` : `FAM-${divisionCode}-001`);
-    const familyQrPayload = formData.familyQrPayload || `VHR-FAMILY|FAM:${familyCode}|DIV:${divisionCode}|MEMBERS_LINKED`;
+    const familyCode = (formData.familyCode || '').trim();
+    const familyQrPayload = (formData.familyQrPayload || familyCode).trim();
 
     const activeSchemes = formData.welfareSchemes && formData.welfareSchemes.length > 0
       ? formData.welfareSchemes
@@ -396,7 +397,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
       address: formData.address?.trim() || '',
       divisionCode,
       familyHead: formData.familyHead ?? (formData.familyRelationship === 'HEAD'),
-      householdNo: formData.householdNo?.trim() || `HH-${divisionCode}-001`,
+      householdNo: formData.householdNo?.trim() || '',
       familyCode,
       familyRelationship: (formData.familyRelationship as FamilyRelationship) || (formData.familyHead ? 'HEAD' : 'OTHER'),
       isPregnantMother: !!formData.isPregnantMother || activeSchemes.includes('PREGNANT_NUTRITION'),
@@ -433,7 +434,10 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
 
   const handleOpenFamilyMasterModal = (famCode: string) => {
     setSelectedFamilyForModal(famCode);
-    const payload = `VHR-FAMILY|FAM:${famCode}|MEMBERS_LINKED`;
+    const matchedMember = beneficiaries.find(
+      (b) => b.familyCode === famCode || b.familyQrPayload === famCode
+    );
+    const payload = matchedMember?.familyQrPayload || famCode;
     generateQrDataUrl(payload).then((url) => {
       setFamilyQrDataUrl(url);
     });
@@ -1482,31 +1486,20 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-blue-950 mb-1">
-                      {lang === 'ta' ? 'குடும்ப QR எண் (Family Master Code):' : 'Family Master QR Code:'} *
+                      {lang === 'ta' ? 'குடும்ப QR அலகுக் குறியீடு (CSV Family QR Code):' : 'Family Master QR Code (From CSV):'}
                     </label>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        required
-                        value={formData.familyCode || ''}
-                        onChange={(e) => setFormData({ ...formData, familyCode: e.target.value.trim().toUpperCase() })}
-                        placeholder="e.g. FAM-211-102"
-                        className="w-full px-3 py-1.5 text-xs border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const div = formData.divisionCode || '211';
-                          setFormData({ ...formData, familyCode: `FAM-${div}-${Math.floor(Math.random() * 800 + 100)}` });
-                        }}
-                        className="px-2.5 py-1 text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg whitespace-nowrap shadow-xs"
-                        title={lang === 'ta' ? 'புதிய எண் ஒதுக்கு' : 'Generate Code'}
-                      >
-                        🎲 {lang === 'ta' ? 'புதிய எண்' : 'New'}
-                      </button>
-                    </div>
+                    <input
+                      type="text"
+                      value={formData.familyQrPayload || formData.familyCode || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormData({ ...formData, familyCode: val, familyQrPayload: val });
+                      }}
+                      placeholder={lang === 'ta' ? 'CSV-இல் குடும்பத்திற்கு வழங்கப்பட்ட QR இலக்கம்' : 'Exact Family QR from CSV'}
+                      className="w-full px-3 py-1.5 text-xs border border-blue-300 rounded-lg font-mono font-bold text-blue-950 bg-white"
+                    />
                     <span className="text-[10px] text-blue-800 mt-1 block">
-                      ℹ️ {lang === 'ta' ? 'குடும்பத்தின் தாய், தந்தை, பிள்ளைகள் அனைவருக்கும் இந்த ஒரே QR எண் பகிர்வதால் ஒரு குடும்பமாக பார்க்க முடியும்.' : 'Shared family QR code links all members together.'}
+                      ℹ️ {lang === 'ta' ? 'CSV-இல் ஒவ்வொரு குடும்பத்திற்கும் வழங்கப்பட்ட மாறாத பொது QR இலக்கம் (எ.கா: குடும்பத்தில் 5 பேருக்கும் இதே இலக்கம்). தானாக உருவாக்கப்படாது.' : 'Exact immutable Family QR supplied in CSV for all members of this family (never auto-generated).'}
                     </span>
                   </div>
 
@@ -1724,6 +1717,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
             setFormData((prev) => ({
               ...prev,
               familyCode: famCode,
+              familyQrPayload: famCode,
               divisionCode: divCode,
               familyHead: false,
               familyRelationship: 'CHILD',

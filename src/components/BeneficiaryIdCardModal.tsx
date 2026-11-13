@@ -29,11 +29,12 @@ export const BeneficiaryIdCardModal: React.FC<BeneficiaryIdCardModalProps> = ({
       });
     }
 
-    const famCode = beneficiary.familyCode || (beneficiary.householdNo ? `FAM-${beneficiary.householdNo.replace(/^HH-/, '')}` : `FAM-${beneficiary.divisionCode}-001`);
-    const payload = beneficiary.familyQrPayload || `VHR-FAMILY|FAM:${famCode}|DIV:${beneficiary.divisionCode}|MEMBERS_LINKED`;
-    generateQrDataUrl(payload).then((url) => {
-      setQrSrc(url);
-    });
+    const payload = (beneficiary.familyQrPayload || beneficiary.familyCode || beneficiary.qrPayload || beneficiary.id || '').trim();
+    if (payload) {
+      generateQrDataUrl(payload).then((url) => {
+        setQrSrc(url);
+      });
+    }
   }, [beneficiary]);
 
   const handlePrint = () => {
