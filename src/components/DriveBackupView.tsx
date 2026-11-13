@@ -655,8 +655,8 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
               <h3 className="text-base font-bold text-slate-900 tracking-tight">
                 {lang === 'ta' ? 'குறிக்கப்பட்ட கூகிள் டிரைவ் நேரடி தரவுத்தள இணைப்பு' : 'Designated Master Google Drive Database Sync'}
               </h3>
-              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono ${isConnected ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-900 border border-amber-300'}`}>
-                {isConnected ? (lang === 'ta' ? 'இணைக்கப்பட்டுள்ளது' : 'CONNECTED') : (lang === 'ta' ? 'இணைப்பு தேவை' : 'CONNECT REQUIRED')}
+              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono ${isConnected || Boolean(getAppsScriptRelayUrl()) ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-900 border border-amber-300'}`}>
+                {isConnected || Boolean(getAppsScriptRelayUrl()) ? (lang === 'ta' ? 'தானியங்கி சேமிப்பு இணைப்பு' : 'AUTO-SAVE CONNECTED') : (lang === 'ta' ? 'இணைப்பு தேவை' : 'CONNECT REQUIRED')}
               </span>
             </div>
 
@@ -772,8 +772,26 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
           )}
         </div>
 
-        {/* Warning banner when not connected to Drive */}
-        {!isConnected && (
+        {/* Connection / Shared Relay Auto-Save Banner */}
+        {!isConnected && Boolean(getAppsScriptRelayUrl()) ? (
+          <div className="mt-3.5 p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">⚡</span>
+              <p className="text-xs text-emerald-950 leading-tight font-medium">
+                {lang === 'ta'
+                  ? 'பகிரப்பட்ட Google Apps Script Relay மூலம் தானியங்கி சேமிப்பு (Auto-Save) இயங்குகிறது! நீங்கள் Google-இல் உள்நுழையாமலேயே அனைத்து மாற்றங்களும் உடனுக்குடன் Drive-இல் தானாகச் சேமிக்கப்படும்.'
+                  : 'Shared Google Apps Script Relay Auto-Save is active! All edits automatically save to Google Drive without needing individual sign-in.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleConnectGoogle}
+              className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-colors shadow-xs"
+            >
+              {lang === 'ta' ? 'Google உடன் இணை' : 'Connect Google'}
+            </button>
+          </div>
+        ) : !isConnected ? (
           <div className="mt-3.5 p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-lg">⚠️</span>
@@ -791,7 +809,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
               {lang === 'ta' ? 'இப்போதே இணைக்கவும்' : 'Connect Now'}
             </button>
           </div>
-        )}
+        ) : null}
 
         {/* 3 Primary Direct Action Buttons */}
         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">

@@ -32,7 +32,7 @@ import {
   Accessibility,
   Layers,
 } from 'lucide-react';
-import { DriveSyncStatus } from '../services/googleDrive';
+import { DriveSyncStatus, isDriveAutoSyncEnabled } from '../services/googleDrive';
 import { getDsDivisionForUser, getDsDivisionById } from '../services/storage';
 
 interface SidebarProps {
@@ -561,33 +561,60 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 space-y-2">
               <div className="flex items-center justify-between text-[11px]">
                 <div className="flex items-center gap-1.5 font-bold">
-                  <Cloud className={`w-3.5 h-3.5 ${isDriveConnected || driveSyncStatus.relayUrl ? 'text-emerald-400' : 'text-amber-400'}`} />
+                  <Cloud className={`w-3.5 h-3.5 ${
+                    driveSyncStatus.state === 'error'
+                      ? 'text-red-400'
+                      : isDriveConnected || driveSyncStatus.relayUrl
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }`} />
                   <span className="text-slate-200">
                     {isDriveConnected || driveSyncStatus.relayUrl
-                      ? (lang === 'ta' ? 'கூகிள் டிரைவ் நேரலை' : 'Google Drive Active')
+                      ? (lang === 'ta' ? 'தானியங்கி டிரைவ் சேமிப்பு' : 'Auto-Save Drive Live')
                       : (lang === 'ta' ? 'மத்திய சேமிப்பகம்' : 'Central Storage')}
                   </span>
                 </div>
-                <span className={`w-2 h-2 rounded-full ${isDriveConnected || driveSyncStatus.relayUrl ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+                <span className={`w-2 h-2 rounded-full ${
+                  driveSyncStatus.state === 'error'
+                    ? 'bg-red-400'
+                    : driveSyncStatus.state === 'syncing' || isSyncing
+                    ? 'bg-sky-400 animate-ping'
+                    : isDriveConnected || driveSyncStatus.relayUrl
+                    ? 'bg-emerald-400 animate-pulse'
+                    : 'bg-amber-400'
+                }`} />
               </div>
 
-              <p className="text-[10px] text-slate-400 leading-tight">
-                {driveSyncStatus.lastSyncedAt
-                  ? (lang === 'ta'
-                      ? `கடைசியாக சேமிக்கப்பட்டது: ${new Date(driveSyncStatus.lastSyncedAt).toLocaleTimeString()}`
-                      : `Last synced: ${new Date(driveSyncStatus.lastSyncedAt).toLocaleTimeString()}`)
-                  : (lang === 'ta' ? 'கோப்பு இணைக்கப்பட்டு தயாராக உள்ளது' : 'Sync ready')}
-              </p>
+              {driveSyncStatus.state === 'syncing' || isSyncing ? (
+                <p className="text-[10px] text-sky-300 font-semibold leading-tight flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+                  <span>{lang === 'ta' ? 'மாற்றங்கள் தானாக டிரைவில் சேமிக்கப்படுகின்றன...' : 'Auto-saving changes to Drive...'}</span>
+                </p>
+              ) : driveSyncStatus.state === 'error' ? (
+                <p className="text-[10px] text-red-300 leading-tight line-clamp-2" title={driveSyncStatus.message}>
+                  {driveSyncStatus.message || (lang === 'ta' ? 'டிரைவ் சேமிப்புப் பிழை' : 'Drive auto-save error')}
+                </p>
+              ) : (
+                <p className="text-[10px] text-slate-400 leading-tight">
+                  {driveSyncStatus.lastSyncedAt
+                    ? (lang === 'ta'
+                        ? `தானாக சேமிக்கப்பட்டது: ${new Date(driveSyncStatus.lastSyncedAt).toLocaleTimeString()}`
+                        : `Auto-saved: ${new Date(driveSyncStatus.lastSyncedAt).toLocaleTimeString()}`)
+                    : isDriveAutoSyncEnabled() && (isDriveConnected || driveSyncStatus.relayUrl)
+                    ? (lang === 'ta' ? 'மாற்றங்கள் அனைத்தும் தானாக டிரைவில் சேமிக்கப்படும்' : 'All changes auto-save to Drive')
+                    : (lang === 'ta' ? 'கோப்பு இணைக்கப்பட்டு தயாராக உள்ளது' : 'Sync ready')}
+                </p>
+              )}
 
               <div className="grid grid-cols-2 gap-1.5 pt-1">
                 <button
                   onClick={onSaveToDriveNow}
                   disabled={isSyncing}
                   className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-colors"
-                  title="Save current database directly to Google Drive"
+                  title="Force immediate sync to Google Drive"
                 >
                   <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{lang === 'ta' ? 'டிரைவில் சேமி' : 'Save Drive'}</span>
+                  <span>{lang === 'ta' ? 'உடனே சேமி' : 'Sync Now'}</span>
                 </button>
                 <button
                   onClick={onQuickSync}

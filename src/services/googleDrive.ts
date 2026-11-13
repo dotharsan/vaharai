@@ -621,7 +621,42 @@ const saveViaAppsScriptRelay = async (
   };
 };
 
+let isDriveWriteInFlight = false;
+let pendingDriveWrite: { snapshotData: any; customFileId?: string } | null = null;
+
+export const isDriveSyncBusy = (): boolean => {
+  return isDriveWriteInFlight || Boolean(driveAutoSyncTimer) || Boolean(pendingDriveWrite);
+};
+
 export const saveToDesignatedDriveFile = async (
+  snapshotData: any,
+  customFileId?: string
+): Promise<{ success: boolean; fileId: string; fileName: string; webViewLink?: string; timestamp: string }> => {
+  if (isDriveWriteInFlight) {
+    pendingDriveWrite = { snapshotData, customFileId };
+    return {
+      success: true,
+      fileId: customFileId || getDesignatedDriveFileId(),
+      fileName: getDesignatedDriveFileName(),
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  isDriveWriteInFlight = true;
+  try {
+    const result = await executeSaveToDesignatedDriveFile(snapshotData, customFileId);
+    while (pendingDriveWrite) {
+      const next = pendingDriveWrite;
+      pendingDriveWrite = null;
+      await executeSaveToDesignatedDriveFile(next.snapshotData, next.customFileId);
+    }
+    return result;
+  } finally {
+    isDriveWriteInFlight = false;
+  }
+};
+
+const executeSaveToDesignatedDriveFile = async (
   snapshotData: any,
   customFileId?: string
 ): Promise<{ success: boolean; fileId: string; fileName: string; webViewLink?: string; timestamp: string }> => {
@@ -751,25 +786,52 @@ export const saveToDesignatedDriveFile = async (
  * Debounced Auto-Drive Sync scheduler (runs when user has enabled Auto-Sync & is authenticated or Relay URL is configured)
  */
 let driveAutoSyncTimer: any = null;
+let pendingAutoSyncSnapshot: any = null;
+
+export const flushAutoDriveSync = async (): Promise<void> => {
+  if (typeof window === 'undefined') return;
+  if (!isDriveAutoSyncEnabled()) return;
+  if (!isGoogleDriveAuthenticated() && !getAppsScriptRelayUrl()) return;
+
+  if (driveAutoSyncTimer) {
+    clearTimeout(driveAutoSyncTimer);
+    driveAutoSyncTimer = null;
+  } else if (!pendingAutoSyncSnapshot) {
+    return;
+  }
+
+  const data = pendingAutoSyncSnapshot || (window as any).__vaharai_create_snapshot?.();
+  pendingAutoSyncSnapshot = null;
+  if (data) {
+    try {
+      await saveToDesignatedDriveFile(data);
+    } catch (err) {
+      console.warn('[Auto-Drive-Sync] Flush failed:', err);
+    }
+  }
+};
 
 export const scheduleAutoDriveSync = (snapshotData?: any) => {
   if (typeof window === 'undefined') return;
   if (!isDriveAutoSyncEnabled()) return;
   if (!isGoogleDriveAuthenticated() && !getAppsScriptRelayUrl()) return;
 
+  pendingAutoSyncSnapshot = snapshotData || null;
   if (driveAutoSyncTimer) clearTimeout(driveAutoSyncTimer);
 
   driveAutoSyncTimer = setTimeout(async () => {
-    try {
-      const data = snapshotData || (window as any).__vaharai_create_snapshot?.();
-      if (data) {
+    driveAutoSyncTimer = null;
+    const data = pendingAutoSyncSnapshot || (window as any).__vaharai_create_snapshot?.();
+    pendingAutoSyncSnapshot = null;
+    if (data) {
+      try {
         await saveToDesignatedDriveFile(data);
         console.log('[Auto-Drive-Sync] Automatically updated designated Google Drive file.');
+      } catch (err) {
+        console.warn('[Auto-Drive-Sync] Failed:', err);
       }
-    } catch (err) {
-      console.warn('[Auto-Drive-Sync] Failed:', err);
     }
-  }, 1500);
+  }, 350);
 };
 
 // ================= Standard Backup List, Download, and Delete ================= //

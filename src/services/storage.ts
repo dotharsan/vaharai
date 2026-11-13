@@ -1712,14 +1712,14 @@ export const scheduleCentralSync = () => {
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(() => {
     const snapshot = createDatabaseSnapshot();
-    // 1. Automatically push to the designated Google Drive file if authenticated
+    // 1. Automatically push to the designated Google Drive file if authenticated or Relay active
     scheduleAutoDriveSync(snapshot);
 
     // 2. Also push to central backend server if available
     if (serverApiAvailable !== false) {
       pushToCentralDatabase(snapshot);
     }
-  }, 500);
+  }, 300);
 };
 
 export const fetchCentralDatabase = async (): Promise<any | null> => {

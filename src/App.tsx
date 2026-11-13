@@ -71,6 +71,8 @@ import {
   fetchSharedDriveConfigFromServer,
   applySharedDriveConfigLocally,
   getAppsScriptRelayUrl,
+  flushAutoDriveSync,
+  isDriveSyncBusy,
 } from './services/googleDrive';
 import { Header } from './components/Header';
 import { LoginView } from './components/LoginView';
@@ -245,8 +247,15 @@ export default function App() {
       return Array.from(map.values());
     };
 
+    let lastPulledRemoteStamp = '';
+
     const hydrateAllFromRemote = (remote: any) => {
       if (!remote || !isMounted) return;
+      const incomingStamp = String(remote.lastServerSync || remote.exportedAt || '');
+      if (incomingStamp && incomingStamp === lastPulledRemoteStamp) {
+        return;
+      }
+      if (incomingStamp) lastPulledRemoteStamp = incomingStamp;
       if (remote.driveConfig && typeof remote.driveConfig === 'object') {
         applySharedDriveConfigLocally(remote.driveConfig);
       }
@@ -381,10 +390,10 @@ export default function App() {
       const canWriteDrive = isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl();
       if (canWriteDrive) {
         try {
-          if (hasLocalChanges && isDriveAutoSyncEnabled()) {
+          if (hasLocalChanges && isDriveAutoSyncEnabled() && !isDriveSyncBusy()) {
             await saveToDesignatedDriveFile(createDatabaseSnapshot());
             lastSyncedMutationAt = currentMutationAt;
-          } else {
+          } else if (!hasLocalChanges && !isDriveSyncBusy()) {
             const driveData = await fetchFromDesignatedDriveFile();
             if (driveData && isMounted) {
               hydrateAllFromRemote(driveData);
@@ -393,7 +402,7 @@ export default function App() {
         } catch {
           // silent offline fallback
         }
-      } else if (forcePull) {
+      } else if (forcePull && !isDriveSyncBusy()) {
         try {
           const driveData = await fetchFromDesignatedDriveFile();
           if (driveData && isMounted) {
@@ -454,20 +463,29 @@ export default function App() {
 
     const syncInterval = setInterval(() => {
       void runCentralSyncCycle(false);
-    }, 8000);
+    }, 25000);
 
     const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        void flushAutoDriveSync();
+        return;
+      }
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         void runCentralSyncCycle(true);
       }
     };
+    const handlePageHide = () => {
+      void flushAutoDriveSync();
+    };
     window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('pagehide', handlePageHide);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
     return () => {
       isMounted = false;
       clearInterval(syncInterval);
       window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('pagehide', handlePageHide);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, []);
