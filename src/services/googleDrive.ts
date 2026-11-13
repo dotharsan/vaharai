@@ -4,6 +4,8 @@ import { parseBeneficiariesFromCsv } from './csv';
 
 export const DEFAULT_DESIGNATED_FILE_ID = '1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2';
 export const DEFAULT_DESIGNATED_FILE_URL = 'https://drive.google.com/file/d/1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2/view?usp=sharing';
+export const DEFAULT_APPS_SCRIPT_RELAY_URL =
+  'https://script.google.com/macros/s/AKfycbw4dMTGc3ZhhM9ZV5uC9z5BPyIgf2bv44LVgHSSI2s7IfHY7LM_LRzr62UKw-pxXMV_MQ/exec';
 
 const STORAGE_KEYS = {
   DESIGNATED_FILE_ID: 'vaharai_ds_designated_drive_file_id',
@@ -44,6 +46,8 @@ export interface SharedDriveConfigPayload {
 let currentSyncStatus: DriveSyncStatus = {
   state: 'idle',
   fileId: DEFAULT_DESIGNATED_FILE_ID,
+  relayUrl: DEFAULT_APPS_SCRIPT_RELAY_URL,
+  isPubliclyReadable: true,
 };
 
 const statusListeners = new Set<(status: DriveSyncStatus) => void>();
@@ -148,9 +152,10 @@ export const setDriveFilePubliclyShared = (val: boolean): void => {
 
 export const getAppsScriptRelayUrl = (): string => {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL) || '';
+    const stored = localStorage.getItem(STORAGE_KEYS.APPS_SCRIPT_RELAY_URL);
+    if (stored && stored.trim()) return stored.trim();
   }
-  return '';
+  return DEFAULT_APPS_SCRIPT_RELAY_URL;
 };
 
 export const setAppsScriptRelayUrl = (url: string, syncServer: boolean = true): string => {
@@ -563,6 +568,59 @@ export const fetchFromDesignatedDriveFile = async (customFileId?: string): Promi
  * Uses PATCH media to update in-place, falls back to creating writable file on 403/404,
  * or pushes via shared Apps Script Relay when configured for non-authenticated staff browsers.
  */
+const saveViaAppsScriptRelay = async (
+  relayUrl: string,
+  fileId: string,
+  snapshotData: any
+): Promise<{ success: boolean; fileId: string; fileName: string; webViewLink?: string; timestamp: string }> => {
+  notifyStatusChange({ state: 'syncing', fileId, message: 'பகிரப்பட்ட டிரைவ் ரிலே மூலம் சேமிக்கப்படுகிறது...' });
+  const resp = await fetch(relayUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ fileId, data: snapshotData }),
+  });
+  const respText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Shared Drive Relay save failed (${resp.status})`);
+  }
+  const trimmed = (respText || '').trim();
+  if (/^<(!doctype|html)/i.test(trimmed)) {
+    const excMatch = trimmed.match(/(Exception:[^<]+)/i);
+    const reason = excMatch ? excMatch[1].trim() : 'Apps Script execution error';
+    throw new Error(`Google Apps Script Relay பிழை: ${reason}. (Drive கோப்புக்கு Editor அனுமதி உள்ளதா அல்லது Code.gs புதுப்பிக்கப்பட்டுள்ளதா எனச் சரிபார்க்கவும்)`);
+  }
+
+  let resolvedFileId = fileId;
+  let resolvedFileName = getDesignatedDriveFileName();
+  if (trimmed.startsWith('{')) {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && parsed.success === false) {
+      throw new Error(parsed.error || 'Shared Drive Relay returned failure');
+    }
+    if (parsed?.fileId && parsed.fileId !== fileId) {
+      resolvedFileId = parsed.fileId;
+      resolvedFileName = parsed.fileName || resolvedFileName;
+      setDesignatedDriveFileId(resolvedFileId, resolvedFileName, true);
+    }
+  }
+
+  const now = new Date().toISOString();
+  notifyStatusChange({
+    state: 'synced',
+    fileId: resolvedFileId,
+    fileName: resolvedFileName,
+    relayUrl,
+    lastSyncedAt: now,
+    message: `பகிரப்பட்ட கூகிள் டிரைவ் கோப்பில் (${resolvedFileName}) சேமிக்கப்பட்டது!`,
+  });
+  return {
+    success: true,
+    fileId: resolvedFileId,
+    fileName: resolvedFileName,
+    timestamp: now,
+  };
+};
+
 export const saveToDesignatedDriveFile = async (
   snapshotData: any,
   customFileId?: string
@@ -571,32 +629,9 @@ export const saveToDesignatedDriveFile = async (
   const relayUrl = getAppsScriptRelayUrl();
   let fileId = customFileId || getDesignatedDriveFileId();
 
-  // Fallback write via Shared Google Apps Script Relay for workstations without Google Login
+  // Shared Google Apps Script Relay path for all workstations without individual owner Google Sign-In
   if (!token && relayUrl && relayUrl.startsWith('https://script.google.com/')) {
-    notifyStatusChange({ state: 'syncing', fileId, message: 'பகிரப்பட்ட டிரைவ் ரிலே மூலம் சேமிக்கப்படுகிறது...' });
-    const resp = await fetch(relayUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ fileId, data: snapshotData }),
-    });
-    if (!resp.ok) {
-      throw new Error(`Shared Drive Relay save failed (${resp.status})`);
-    }
-    const now = new Date().toISOString();
-    const fileName = getDesignatedDriveFileName();
-    notifyStatusChange({
-      state: 'synced',
-      fileId,
-      fileName,
-      lastSyncedAt: now,
-      message: `பகிரப்பட்ட கூகிள் டிரைவ் கோப்பில் (${fileName}) சேமிக்கப்பட்டது!`,
-    });
-    return {
-      success: true,
-      fileId,
-      fileName,
-      timestamp: now,
-    };
+    return saveViaAppsScriptRelay(relayUrl, fileId, snapshotData);
   }
 
   if (!token) {
@@ -668,9 +703,17 @@ export const saveToDesignatedDriveFile = async (
       };
     }
 
-    // If 404 (not in this user's Drive) or 403 (read-only shared file such as default template),
-    // create a writable master JSON file in the user's own Drive and publish its File ID to shared-config
+    // If 404 (not in this user's Drive) or 403 (read-only shared file for non-owner OAuth user):
+    // First try shared Apps Script Relay so every browser writes into the SAME shared Drive file,
+    // otherwise fall back to creating a writable master JSON file in the user's own Drive.
     if (response.status === 404 || response.status === 403) {
+      if (relayUrl && relayUrl.startsWith('https://script.google.com/')) {
+        try {
+          return await saveViaAppsScriptRelay(relayUrl, fileId, snapshotData);
+        } catch (relayErr) {
+          console.warn('Relay fallback after 403/404 failed, creating local master copy:', relayErr);
+        }
+      }
       console.warn(`Target file ${fileId} not writable or not found (${response.status}). Creating writable master file in user's Drive...`);
       const newBackup = await uploadBackupToDrive(snapshotData, 'vaharai_ds_master_central_database.json');
       setDesignatedDriveFileId(newBackup.id, newBackup.name, true);

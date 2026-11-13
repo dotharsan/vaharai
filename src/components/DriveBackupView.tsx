@@ -344,7 +344,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
     targetFileName: string = designatedFileName,
     mode: 'designated' | 'overwrite_existing' = 'designated'
   ) => {
-    if (!isConnected) {
+    if (!isConnected && !(mode === 'designated' && !!getAppsScriptRelayUrl())) {
       setErrorMessage(
         lang === 'ta'
           ? '⚠️ உங்கள் கூகிள் கணக்கு இன்னும் இணைக்கப்படவில்லை. மேலே உள்ள "Connect Drive (பாப்-அப்)" அல்லது "முழு பக்க Redirect" பொத்தானை அழுத்தி கூகிள் கணக்கை இணைக்கவும். அல்லது "Master JSON பதிவிறக்கம்" மூலம் முழு தரவுத்தளத்தையும் இப்போதே சேமிக்கலாம்.'
@@ -376,7 +376,9 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
       );
       onAuditLog('DRIVE_MASTER_SYNC', `Saved master database directly to Google Drive file: ${res.fileName} (${res.fileId})`);
       setPushConfirmTarget(null);
-      await fetchBackups();
+      if (isConnected) {
+        await fetchBackups();
+      }
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save to designated Google Drive file');
     } finally {
@@ -510,7 +512,9 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
             ? `✅ பழைய அனைத்து சேமிப்பகமும் அழிக்கப்பட்டு, காலியான பயனாளிகள் (0 பிரஜைகள்) கொண்ட புதிய தரவுத்தளம் Google Drive-இல் (${res.fileName}) சேமிக்கப்பட்டது!`
             : `✅ All old storage wiped and clean empty database (0 citizens) saved to Google Drive (${res.fileName})!`
         );
-        await fetchBackups();
+        if (isConnected) {
+          await fetchBackups();
+        }
       } else {
         setStatusMessage(
           lang === 'ta'
@@ -1837,18 +1841,53 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
 
       {/* Google Apps Script Multi-User Relay Instructions Modal */}
       {showAppsScriptModal && (() => {
-        const scriptSnippet = `function doGet(e) {
-  var fileId = (e && e.parameter && e.parameter.fileId) || "${designatedFileId}";
-  var content = DriveApp.getFileById(fileId).getBlob().getDataAsString();
-  return ContentService.createTextOutput(content).setMimeType(ContentService.MimeType.JSON);
+        const scriptSnippet = `var MASTER_NAME = "vaharai_ds_master_database.json";
+
+function getTargetFile(requestedId) {
+  var props = PropertiesService.getScriptProperties();
+  var savedId = props.getProperty("MASTER_FILE_ID");
+  if (savedId) {
+    try { return DriveApp.getFileById(savedId); } catch (e) {}
+  }
+  if (requestedId) {
+    try { return DriveApp.getFileById(requestedId); } catch (e) {}
+  }
+  var found = DriveApp.getFilesByName(MASTER_NAME);
+  if (found.hasNext()) {
+    var f = found.next();
+    props.setProperty("MASTER_FILE_ID", f.getId());
+    return f;
+  }
+  var created = DriveApp.createFile(MASTER_NAME, JSON.stringify({
+    version: "4.0", explicitlyCleared: true, clearedAt: new Date().toISOString(),
+    users: [], beneficiaries: [], tokens: [], divisions: []
+  }, null, 2), MimeType.PLAIN_TEXT);
+  created.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  props.setProperty("MASTER_FILE_ID", created.getId());
+  return created;
+}
+
+function doGet(e) {
+  var reqId = (e && e.parameter && e.parameter.fileId) || "${designatedFileId}";
+  var file = getTargetFile(reqId);
+  return ContentService.createTextOutput(file.getBlob().getDataAsString()).setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
   var body = JSON.parse(e.postData.contents || "{}");
-  var fileId = body.fileId || "${designatedFileId}";
   var payload = JSON.stringify(body.data || body, null, 2);
-  DriveApp.getFileById(fileId).setContent(payload);
-  return ContentService.createTextOutput(JSON.stringify({ success: true, fileId: fileId })).setMimeType(ContentService.MimeType.JSON);
+  var file = getTargetFile(body.fileId || "${designatedFileId}");
+  try {
+    file.setContent(payload);
+  } catch (err) {
+    // If existing file is read-only/viewer-only, create a writable copy in your own Google Drive
+    file = DriveApp.createFile(MASTER_NAME, payload, MimeType.PLAIN_TEXT);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    PropertiesService.getScriptProperties().setProperty("MASTER_FILE_ID", file.getId());
+  }
+  return ContentService.createTextOutput(JSON.stringify({
+    success: true, fileId: file.getId(), fileName: file.getName()
+  })).setMimeType(ContentService.MimeType.JSON);
 }`;
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
@@ -1860,10 +1899,9 @@ function doPost(e) {
                 <button type="button" onClick={() => setShowAppsScriptModal(false)} className="text-slate-400 hover:text-slate-700 font-bold">✕</button>
               </div>
               <ol className="list-decimal list-inside text-xs text-slate-600 space-y-1">
-                <li>{lang === 'ta' ? 'உங்கள் Google கணக்கில் script.google.com திறந்து புதிய Project உருவாக்கவும்.' : 'Open script.google.com in your Google account and create a New Project.'}</li>
-                <li>{lang === 'ta' ? 'கீழே உள்ள குறியீட்டை ஒட்டவும்:' : 'Paste the code below:'}</li>
-                <li>{lang === 'ta' ? 'Deploy -> New deployment -> Web app -> Execute as: Me -> Who has access: Anyone.' : 'Deploy -> New deployment -> Web app -> Execute as: Me -> Who has access: Anyone.'}</li>
-                <li>{lang === 'ta' ? 'கிடைக்கும் Web App URL-ஐ "Shared Google Apps Script Relay URL" பகுதியில் சேமிக்கவும்.' : 'Paste the Web App URL into the Relay URL input and click Save Relay URL.'}</li>
+                <li>{lang === 'ta' ? 'script.google.com திறந்து Code.gs-இல் கீழே உள்ள குறியீட்டை ஒட்டி Save செய்யவும்.' : 'Open script.google.com, paste the code below into Code.gs, and Save.'}</li>
+                <li>{lang === 'ta' ? 'Deploy -> Manage deployments -> Edit (✏️) -> Version: "New version" -> Execute as: Me -> Who has access: Anyone -> Deploy.' : 'Deploy -> Manage deployments -> Edit -> Version: New version -> Execute as: Me -> Who has access: Anyone -> Deploy.'}</li>
+                <li>{lang === 'ta' ? 'பழைய கோப்பு Viewer-only ஆக இருந்தால், இது தானாகவே உங்கள் Drive-இல் புதிய எழுதக்கூடிய கோப்பை உருவாக்கும்.' : 'If the old file is viewer-only, this automatically creates a writable file in your own Google Drive.'}</li>
               </ol>
               <pre className="p-3 bg-slate-900 text-emerald-300 rounded-lg text-[11px] font-mono overflow-x-auto select-all">{scriptSnippet}</pre>
               <div className="flex items-center justify-end gap-2">

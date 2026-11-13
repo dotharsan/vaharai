@@ -561,14 +561,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="bg-slate-900/90 rounded-xl p-2.5 border border-slate-800 space-y-2">
               <div className="flex items-center justify-between text-[11px]">
                 <div className="flex items-center gap-1.5 font-bold">
-                  <Cloud className={`w-3.5 h-3.5 ${isDriveConnected ? 'text-emerald-400' : 'text-amber-400'}`} />
+                  <Cloud className={`w-3.5 h-3.5 ${isDriveConnected || driveSyncStatus.relayUrl ? 'text-emerald-400' : 'text-amber-400'}`} />
                   <span className="text-slate-200">
-                    {isDriveConnected
+                    {isDriveConnected || driveSyncStatus.relayUrl
                       ? (lang === 'ta' ? 'கூகிள் டிரைவ் நேரலை' : 'Google Drive Active')
                       : (lang === 'ta' ? 'மத்திய சேமிப்பகம்' : 'Central Storage')}
                   </span>
                 </div>
-                <span className={`w-2 h-2 rounded-full ${isDriveConnected ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
+                <span className={`w-2 h-2 rounded-full ${isDriveConnected || driveSyncStatus.relayUrl ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`} />
               </div>
 
               <p className="text-[10px] text-slate-400 leading-tight">

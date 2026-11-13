@@ -12,14 +12,17 @@ export interface SharedDriveConfig {
   updatedAt: string;
 }
 
+export const DEFAULT_APPS_SCRIPT_RELAY_URL =
+  'https://script.google.com/macros/s/AKfycbw4dMTGc3ZhhM9ZV5uC9z5BPyIgf2bv44LVgHSSI2s7IfHY7LM_LRzr62UKw-pxXMV_MQ/exec';
+
 const DEFAULT_CONFIG: SharedDriveConfig = {
   fileId: '1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2',
   fileName: 'vaharai_ds_master_database.json',
   webViewLink: 'https://drive.google.com/file/d/1oEDEnf1xa-7FQm89Wz9hgVBGWiF5Ylr2/view?usp=sharing',
   sheetUrl: '',
-  relayUrl: '',
+  relayUrl: DEFAULT_APPS_SCRIPT_RELAY_URL,
   ownerEmail: '',
-  isPubliclyReadable: false,
+  isPubliclyReadable: true,
   updatedAt: new Date().toISOString(),
 };
 
