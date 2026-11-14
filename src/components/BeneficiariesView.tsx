@@ -52,7 +52,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
   const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
   const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
   const officerDivision = isGramaNiladhari ? currentUser.division || '211' : '';
-  const canDelete = !isDistrictAdmin && (currentUser.role === 'SUPERADMIN' || currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2');
+  const canDelete = !isDistrictAdmin && currentUser.role === 'SUPERADMIN';
 
   // Specialized Officer Roles
   const isECDO = currentUser.role === 'ECDO';
@@ -445,7 +445,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
 
   const handleDelete = (b: Beneficiary) => {
     if (!canDelete) {
-      alert(lang === 'ta' ? 'பதிவுகளை நீக்கும் அதிகாரம் சூப்பர் அட்மின் மற்றும் அட்மினுக்கு மட்டுமே உண்டு.' : 'Permission denied. Only Super Admin and Admin can delete records.');
+      alert(lang === 'ta' ? 'பதிவுகளை நீக்கும் அதிகாரம் சுப்பர் அட்மினுக்கு (Super Admin) மட்டுமே உண்டு.' : 'Permission denied. Only Super Admin can delete records.');
       return;
     }
     if (!window.confirm(t.deleteConfirm)) return;

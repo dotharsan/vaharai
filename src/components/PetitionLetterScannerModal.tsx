@@ -151,7 +151,7 @@ export const PetitionLetterScannerModal: React.FC<PetitionLetterScannerModalProp
     triggerAiAnalysis(dataUrl);
   };
 
-  // Handle uploaded image file
+  // Handle uploaded image file (compress/resize cleanly so large phone photos never exceed payload limits)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -163,11 +163,39 @@ export const PetitionLetterScannerModal: React.FC<PetitionLetterScannerModalProp
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        setCapturedImage(dataUrl);
-        triggerAiAnalysis(dataUrl);
-      }
+      const rawDataUrl = event.target?.result as string;
+      if (!rawDataUrl) return;
+
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 1600;
+        let targetW = img.width;
+        let targetH = img.height;
+        if (targetW > maxDim || targetH > maxDim) {
+          const ratio = Math.min(maxDim / targetW, maxDim / targetH);
+          targetW = Math.round(targetW * ratio);
+          targetH = Math.round(targetH * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+          const compressedUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setCapturedImage(compressedUrl);
+          triggerAiAnalysis(compressedUrl);
+        } else {
+          setCapturedImage(rawDataUrl);
+          triggerAiAnalysis(rawDataUrl);
+        }
+      };
+      img.onerror = () => {
+        setCapturedImage(rawDataUrl);
+        triggerAiAnalysis(rawDataUrl);
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };

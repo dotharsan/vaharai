@@ -200,8 +200,12 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
     alert(lang === 'ta' ? 'அனைத்து மாற்றுத்திறனாளி விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All disability records have been wiped.');
   };
 
-  // Delete single disability citizen
+  // Delete single disability citizen (Super Admin only)
   const handleDeleteSingleDisability = (b: Beneficiary) => {
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'மாற்றுத்திறனாளி பதிவை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete disability records.');
+      return;
+    }
     const confirmed = window.confirm(
       lang === 'ta'
         ? `${b.nameTa} (${b.nic}) அவர்களின் விபரங்களை நிரந்தரமாக அழிக்க விரும்புகிறீர்களா?`
@@ -926,15 +930,17 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
                           onClick={() => setViewingCardCitizen(b)}
                           className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded font-bold text-[11px] transition-colors"
                         >
-                          🪪 அடையாள அட்டை
+                          ������ அடையாள அட்டை
                         </button>
-                        <button
-                          onClick={() => handleDeleteSingleDisability(b)}
-                          className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded font-bold text-[11px] border border-rose-200 transition-colors"
-                          title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி' : 'Delete permanently'}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 inline" />
-                        </button>
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => handleDeleteSingleDisability(b)}
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded font-bold text-[11px] border border-rose-200 transition-colors"
+                            title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி (Super Admin)' : 'Delete permanently (Super Admin)'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

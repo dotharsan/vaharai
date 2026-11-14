@@ -139,8 +139,12 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     alert(lang === 'ta' ? 'அனைத்து கர்ப்பிணித் தாய்மார் விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All pregnant mother records have been wiped.');
   };
 
-  // Delete single pregnant mother record
+  // Delete single pregnant mother record (Super Admin only)
   const handleDeleteSingleMother = (m: PregnantMotherRecord) => {
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'கர்ப்பிணித் தாய் பதிவை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete pregnant mother records.');
+      return;
+    }
     const confirmed = window.confirm(
       lang === 'ta'
         ? `${m.name} (${m.nic}) அவர்களின் விபரங்களை நிரந்தரமாக அழிக்க விரும்புகிறீர்களா?`
@@ -1098,13 +1102,15 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
                             முடிவுக்கு நகர்த்துக
                           </button>
                         )}
-                        <button
-                          onClick={() => handleDeleteSingleMother(m)}
-                          className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
-                          title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி' : 'Delete permanently'}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 inline" />
-                        </button>
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => handleDeleteSingleMother(m)}
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
+                            title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி (Super Admin)' : 'Delete permanently (Super Admin)'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 inline" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

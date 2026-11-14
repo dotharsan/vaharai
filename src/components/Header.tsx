@@ -10,6 +10,8 @@ import {
   Tv,
   CheckCircle2,
   Building2,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { DriveSyncStatus } from '../services/googleDrive';
 import { getDsDivisionById } from '../services/storage';
@@ -32,6 +34,10 @@ interface HeaderProps {
   onOpenOfficeLayout?: () => void;
   selectedDsDivisionId?: string;
   onSelectDsDivision?: (dsId: string) => void;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  onGoBack?: () => void;
+  onGoForward?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -52,6 +58,10 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenOfficeLayout,
   selectedDsDivisionId,
   onSelectDsDivision,
+  canGoBack = false,
+  canGoForward = false,
+  onGoBack,
+  onGoForward,
 }) => {
   const t = translations[lang];
   const isNormal = currentUser?.role === 'NORMAL';
@@ -107,6 +117,10 @@ export const Header: React.FC<HeaderProps> = ({
         return lang === 'ta' ? 'குடும்ப தரவு மையம்' : 'Family Data Center';
       case 'petitions':
         return lang === 'ta' ? 'பொதுமக்கள் மனுக்கள்' : 'Public Petitions';
+      case 'services':
+        return t.navServices;
+      case 'universal-search':
+        return lang === 'ta' ? 'அகில பொதுமக்கள் தேடல்' : 'Universal Citizen Search';
       default:
         return tab;
     }
@@ -157,6 +171,31 @@ export const Header: React.FC<HeaderProps> = ({
                 {lang === 'ta' ? 'மெனு' : 'Menu'}
               </span>
             </button>
+          )}
+
+          {currentUser && !isNormal && (onGoBack || onGoForward) && (
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button
+                type="button"
+                onClick={onGoBack}
+                disabled={!canGoBack}
+                className="px-2 py-1 rounded-md text-xs font-bold flex items-center gap-1 bg-white hover:bg-emerald-50 text-slate-800 disabled:opacity-40 disabled:bg-transparent disabled:hover:bg-transparent transition-colors shadow-2xs"
+                title={lang === 'ta' ? 'பின் செல்ல (Back)' : 'Go Back'}
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-emerald-800" />
+                <span className="hidden sm:inline">{lang === 'ta' ? 'பின்' : 'Back'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={onGoForward}
+                disabled={!canGoForward}
+                className="px-2 py-1 rounded-md text-xs font-bold flex items-center gap-1 bg-white hover:bg-emerald-50 text-slate-800 disabled:opacity-40 disabled:bg-transparent disabled:hover:bg-transparent transition-colors shadow-2xs"
+                title={lang === 'ta' ? 'முன் செல்ல (Forward)' : 'Go Forward'}
+              >
+                <span className="hidden sm:inline">{lang === 'ta' ? 'முன்' : 'Forward'}</span>
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-800" />
+              </button>
+            </div>
           )}
 
           <div className="flex items-center gap-2">

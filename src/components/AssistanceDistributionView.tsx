@@ -164,7 +164,10 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
   const [selectedRecordForEdit, setSelectedRecordForEdit] = useState<AssistanceRecord | null>(null);
 
   const handleDeleteRecord = (recordId: string) => {
-    if (!isSuperAdmin && currentUser?.role !== 'ADMIN 1' && currentUser?.role !== 'ADMIN 2') return;
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'உதவிப் பதிவை நீக்கும் அதிகாரம் சுப்பர் அட்மினுக்கு (Super Admin) மட்டுமே உண்டு.' : 'Only Super Admin can delete relief records.');
+      return;
+    }
     const confirmMsg = lang === 'ta'
       ? 'இந்த உதவிப் பதிவை நிச்சயமாக நிரந்தரமாக நீக்க வேண்டுமா?'
       : 'Are you sure you want to permanently delete this relief record?';
@@ -1666,12 +1669,12 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                           )}
-                          {(isSuperAdmin || currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2') && (
+                          {isSuperAdmin && (
                             <button
                               type="button"
                               onClick={() => handleDeleteRecord(rec.id)}
                               className="p-1.5 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded text-xs font-bold transition-colors"
-                              title={lang === 'ta' ? 'உதவிப் பதிவை நீக்கு' : 'Delete Record'}
+                              title={lang === 'ta' ? 'உதவிப் பதிவை நீக்கு (Super Admin)' : 'Delete Record (Super Admin)'}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1820,17 +1823,19 @@ export const AssistanceDistributionView: React.FC<AssistanceDistributionViewProp
               </div>
 
               <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleDeleteRecord(selectedRecordForEdit.id);
-                    setSelectedRecordForEdit(null);
-                  }}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5 inline mr-1" />
-                  <span>{lang === 'ta' ? 'பதிவை நீக்கு' : 'Delete'}</span>
-                </button>
+                {isSuperAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDeleteRecord(selectedRecordForEdit.id);
+                      setSelectedRecordForEdit(null);
+                    }}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                    <span>{lang === 'ta' ? 'பதிவை நீக்கு' : 'Delete'}</span>
+                  </button>
+                ) : <span />}
 
                 <div className="flex gap-2">
                   <button

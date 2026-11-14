@@ -245,10 +245,10 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
     setSelectedPetitionForAction(null);
   };
 
-  // Delete petition
+  // Delete petition (Super Admin only)
   const handleDeletePetition = (pet: PublicPetition) => {
-    if (!isAdmin) {
-      alert(lang === 'ta' ? 'அழிக்க அட்மின் அனுமதி தேவை.' : 'Admin permission required to delete.');
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'மனு பதிவை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete petitions.');
       return;
     }
     const confirmDelete = window.confirm(
@@ -940,11 +940,11 @@ export const PublicPetitionsView: React.FC<PublicPetitionsViewProps> = ({
                         >
                           நடவடிக்கை / தீர்வு
                         </button>
-                        {isAdmin && (
+                        {isSuperAdmin && (
                           <button
                             onClick={() => handleDeletePetition(p)}
                             className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
-                            title="அழிக்க"
+                            title={lang === 'ta' ? 'அழிக்க (Super Admin)' : 'Delete (Super Admin)'}
                           >
                             <Trash2 className="w-3.5 h-3.5 inline" />
                           </button>

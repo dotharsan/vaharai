@@ -100,12 +100,47 @@ import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { StorageTransparencyModal } from './components/StorageTransparencyModal';
 import { OfficeLayoutModal } from './components/OfficeLayoutModal';
 import { Sidebar } from './components/Sidebar';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 
 export default function App() {
   // Authentication & Session
   const [currentUser, setCurrentUser] = useState<User | null>(() => getActiveUserSession());
   const [lang, setLang] = useState<Language>('ta');
-  const [currentTab, setCurrentTab] = useState<string>('dashboard');
+  const [navState, setNavState] = useState<{ history: string[]; index: number }>({
+    history: ['dashboard'],
+    index: 0,
+  });
+  const currentTab = navState.history[navState.index] || 'dashboard';
+
+  const navigateToTab = (nextTab: string) => {
+    if (!nextTab) return;
+    setNavState((prev) => {
+      const active = prev.history[prev.index];
+      if (active === nextTab) return prev;
+      const nextHistory = [...prev.history.slice(0, prev.index + 1), nextTab];
+      return { history: nextHistory, index: nextHistory.length - 1 };
+    });
+  };
+
+  const resetNavTab = (tab: string) => {
+    setNavState({ history: [tab], index: 0 });
+  };
+
+  const canGoBack = navState.index > 0;
+  const canGoForward = navState.index < navState.history.length - 1;
+
+  const handleGoBack = () => {
+    setNavState((prev) =>
+      prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev
+    );
+  };
+
+  const handleGoForward = () => {
+    setNavState((prev) =>
+      prev.index < prev.history.length - 1 ? { ...prev, index: prev.index + 1 } : prev
+    );
+  };
+
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [selectedDsDivisionId, setSelectedDsDivisionId] = useState<string>(() => {
     const session = getActiveUserSession();
@@ -150,19 +185,19 @@ export default function App() {
         setCurrentUser(found);
         setSelectedDsDivisionId(found.role === 'DISTRICT_ADMIN' ? 'ALL' : (found.dsDivisionId || 'DS_VAHARAI'));
         if (found.role === 'DISTRICT_ADMIN') {
-          setCurrentTab('district');
+          resetNavTab('district');
         } else if (found.role === 'LAND_OFFICER') {
-          setCurrentTab('land');
+          resetNavTab('land');
         } else if (found.role === 'Reception Registrar') {
-          setCurrentTab('reception');
+          resetNavTab('reception');
         } else if (found.role === 'NORMAL') {
-          setCurrentTab('live-display');
+          resetNavTab('live-display');
         } else if (found.role === 'ELDERLY_OFFICER') {
-          setCurrentTab('elderly');
+          resetNavTab('elderly');
         } else if (found.role === 'MATERNITY_OFFICER' || found.role === 'ECDO') {
-          setCurrentTab('maternity');
+          resetNavTab('maternity');
         } else if (found.role === 'DISABILITY_OFFICER') {
-          setCurrentTab('disability');
+          resetNavTab('disability');
         }
       }
     }
@@ -496,21 +531,21 @@ export default function App() {
     const initialDsId = user.role === 'DISTRICT_ADMIN' ? 'ALL' : (user.dsDivisionId || 'DS_VAHARAI');
     setSelectedDsDivisionId(initialDsId);
     if (user.role === 'DISTRICT_ADMIN') {
-      setCurrentTab('district');
+      resetNavTab('district');
     } else if (user.role === 'LAND_OFFICER') {
-      setCurrentTab('land');
+      resetNavTab('land');
     } else if (user.role === 'Reception Registrar') {
-      setCurrentTab('reception');
+      resetNavTab('reception');
     } else if (user.role === 'NORMAL') {
-      setCurrentTab('live-display');
+      resetNavTab('live-display');
     } else if (user.role === 'ELDERLY_OFFICER') {
-      setCurrentTab('elderly');
+      resetNavTab('elderly');
     } else if (user.role === 'MATERNITY_OFFICER' || user.role === 'ECDO') {
-      setCurrentTab('maternity');
+      resetNavTab('maternity');
     } else if (user.role === 'DISABILITY_OFFICER') {
-      setCurrentTab('beneficiaries');
+      resetNavTab('beneficiaries');
     } else {
-      setCurrentTab('dashboard');
+      resetNavTab('dashboard');
     }
     logAuditAction(user.id, user.name, 'USER_LOGIN', `Logged in with role: ${user.role}`);
     setAuditLogs(loadAuditLogs());
@@ -843,7 +878,7 @@ export default function App() {
       setSyncToastMessage(e.message || 'Drive connect failed');
       // If admin, open Drive settings tab to show alternatives
       if (currentUser?.role === 'SUPERADMIN' || currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2') {
-        setCurrentTab('drive');
+        navigateToTab('drive');
       }
     } finally {
       setIsManualSyncing(false);
@@ -962,7 +997,7 @@ export default function App() {
       <Header
         currentUser={currentUser}
         currentTab={safeTab}
-        setCurrentTab={setCurrentTab}
+        setCurrentTab={navigateToTab}
         lang={lang}
         setLang={setLang}
         onLogout={handleLogout}
@@ -977,6 +1012,10 @@ export default function App() {
         onOpenOfficeLayout={() => setShowOfficeLayoutModal(true)}
         selectedDsDivisionId={selectedDsDivisionId}
         onSelectDsDivision={(dsId) => setSelectedDsDivisionId(dsId)}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        onGoBack={handleGoBack}
+        onGoForward={handleGoForward}
       />
 
       {/* Floating Status / Sync Toast */}
@@ -992,7 +1031,7 @@ export default function App() {
           <Sidebar
             currentUser={currentUser}
             currentTab={safeTab}
-            setCurrentTab={setCurrentTab}
+            setCurrentTab={navigateToTab}
             lang={lang}
             onLogout={handleLogout}
             onOpenScanner={() => setShowScanner(true)}
@@ -1009,6 +1048,35 @@ export default function App() {
 
         {/* Main View Area with strict overflow safety */}
         <main className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 no-print overflow-x-hidden max-w-7xl mx-auto w-full">
+        {!isNormal && (
+          <div className="mb-4 flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-2xs no-print">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleGoBack}
+                disabled={!canGoBack}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-800 disabled:opacity-40 disabled:hover:bg-slate-50 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                title={lang === 'ta' ? 'பின் செல்ல (Back)' : 'Go Back'}
+              >
+                <ArrowLeft className="w-3.5 h-3.5 text-emerald-800" />
+                <span>{lang === 'ta' ? 'பின் (Back)' : 'Back'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleGoForward}
+                disabled={!canGoForward}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-800 disabled:opacity-40 disabled:hover:bg-slate-50 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                title={lang === 'ta' ? 'முன் செல்ல (Forward)' : 'Go Forward'}
+              >
+                <span>{lang === 'ta' ? 'முன் (Forward)' : 'Forward'}</span>
+                <ArrowRight className="w-3.5 h-3.5 text-emerald-800" />
+              </button>
+            </div>
+            <div className="text-[11px] font-mono text-slate-500 hidden sm:flex items-center gap-1.5">
+              <span>{navState.index + 1} / {navState.history.length}</span>
+            </div>
+          </div>
+        )}
         {safeTab === 'district' && (
           <DistrictMasterAdminView
             currentUser={currentUser}
@@ -1024,7 +1092,7 @@ export default function App() {
             onAuditLog={handleAuditLog}
             onSelectDsDivision={(dsId: string) => {
               setSelectedDsDivisionId(dsId);
-              setCurrentTab('dashboard');
+              navigateToTab('dashboard');
             }}
           />
         )}
@@ -1053,7 +1121,7 @@ export default function App() {
             households={scopedHouseholds}
             currentUser={currentUser}
             lang={lang}
-            onNavigate={(tab) => setCurrentTab(tab)}
+            onNavigate={(tab) => navigateToTab(tab)}
             selectedDsDivisionId={selectedDsDivisionId}
           />
         )}
@@ -1141,8 +1209,8 @@ export default function App() {
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
             onUpdateServices={handleUpdateServices}
             onAuditLog={handleAuditLog}
-            onNavigateToLiveDisplay={() => setCurrentTab('live-display')}
-            onNavigateToServices={() => setCurrentTab('services')}
+            onNavigateToLiveDisplay={() => navigateToTab('live-display')}
+            onNavigateToServices={() => navigateToTab('services')}
           />
         )}
 
@@ -1216,7 +1284,7 @@ export default function App() {
             lang={lang}
             onUpdateLandRecords={handleUpdateLandRecords}
             onAuditLog={handleAuditLog}
-            onNavigateToCsv={() => setCurrentTab('csv')}
+            onNavigateToCsv={() => navigateToTab('csv')}
           />
         )}
 
@@ -1239,7 +1307,7 @@ export default function App() {
             onUpdateLandRecords={handleUpdateLandRecords}
             onUpdateHouseholds={handleUpdateHouseholds}
             onAuditLog={handleAuditLog}
-            onNavigateToDrive={() => setCurrentTab('drive')}
+            onNavigateToDrive={() => navigateToTab('drive')}
           />
         )}
 
@@ -1285,11 +1353,11 @@ export default function App() {
           lang={lang}
           onSelectBeneficiary={() => {
             if (!isReception && !isNormal) {
-              setCurrentTab('beneficiaries');
+              navigateToTab('beneficiaries');
             } else if (isReception) {
-              setCurrentTab('reception');
+              navigateToTab('reception');
             } else {
-              setCurrentTab('live-display');
+              navigateToTab('live-display');
             }
           }}
           onClose={() => setShowScanner(false)}

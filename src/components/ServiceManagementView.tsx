@@ -160,6 +160,10 @@ export const ServiceManagementView: React.FC<ServiceManagementViewProps> = ({
   };
 
   const handleDeleteService = (srv: ServiceDefinition) => {
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'சேவையை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete services.');
+      return;
+    }
     const confirmMsg = lang === 'ta'
       ? `"${srv.nameTa}" சேவையை நிச்சயமாக நீக்க விரும்புகிறீர்களா?`
       : `Are you sure you want to delete service "${srv.nameEn}"?`;

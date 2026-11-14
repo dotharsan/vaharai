@@ -58,6 +58,7 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   onAuditLog,
 }) => {
   const t = translations[lang];
+  const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
 
   const [isConnected, setIsConnected] = useState<boolean>(() => !!getGoogleAccessToken());
   const [googleUserEmail, setGoogleUserEmail] = useState<string>(() => getGoogleDriveUser()?.email || '');
@@ -294,6 +295,11 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   };
 
   const handleDeleteBackupConfirm = async () => {
+    if (!isSuperAdmin) {
+      setErrorMessage(lang === 'ta' ? 'டிரைவ் கோப்பை நீக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete Drive files.');
+      setDeleteConfirmItem(null);
+      return;
+    }
     if (!deleteConfirmItem) return;
     setIsLoading(true);
     setErrorMessage('');
@@ -494,6 +500,11 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
   };
 
   const handleConfirmWipeAndResetDrive = async () => {
+    if (!isSuperAdmin) {
+      setErrorMessage(lang === 'ta' ? 'சேமிப்பகத்தை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can wipe storage.');
+      setWipeConfirmOpen(false);
+      return;
+    }
     setIsLoading(true);
     setErrorMessage('');
     try {
@@ -891,26 +902,28 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
             </button>
           </div>
 
-          <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2">
-            <div className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
-              <span>🧹</span>
-              <span>{lang === 'ta' ? 'பழைய சேமிப்பகத்தை அழித்து காலியாக்குக (0 பயனாளிகள்)' : 'Wipe All Storage & Reset Empty Beneficiaries'}</span>
+          {isSuperAdmin && (
+            <div className="p-3.5 bg-rose-50/70 border border-rose-200 rounded-xl space-y-2">
+              <div className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+                <span>🧹</span>
+                <span>{lang === 'ta' ? 'பழைய சேமிப்பகத்தை அழித்து காலியாக்குக (0 பயனாளிகள்)' : 'Wipe All Storage & Reset Empty Beneficiaries'}</span>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                {lang === 'ta'
+                  ? 'உலாவி (LocalStorage / IndexedDB), சர்வர் மற்றும் இணைக்கப்பட்ட டிரைவ் கோப்பிலுள்ள பழைய பயனாளிகள் அனைத்தையும் அழித்து 0 ஆக மாற்றும்.'
+                  : 'Clears browser, server, and Drive beneficiary records so the database starts completely empty (0 beneficiaries).'}
+              </p>
+              <button
+                type="button"
+                onClick={() => setWipeConfirmOpen(true)}
+                disabled={isLoading}
+                className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <span>🗑️</span>
+                <span>{lang === 'ta' ? 'அனைத்தையும் அழித்து காலியான டிரைவ் அமை' : 'Wipe All Storage & Save Empty to Drive'}</span>
+              </button>
             </div>
-            <p className="text-[11px] text-slate-600 leading-relaxed">
-              {lang === 'ta'
-                ? 'உலாவி (LocalStorage / IndexedDB), சர்வர் மற்றும் இணைக்கப்பட்ட டிரைவ் கோப்பிலுள்ள பழைய பயனாளிகள் அனைத்தையும் அழித்து 0 ஆக மாற்றும்.'
-                : 'Clears browser, server, and Drive beneficiary records so the database starts completely empty (0 beneficiaries).'}
-            </p>
-            <button
-              type="button"
-              onClick={() => setWipeConfirmOpen(true)}
-              disabled={isLoading}
-              className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs flex items-center justify-center gap-1.5"
-            >
-              <span>🗑️</span>
-              <span>{lang === 'ta' ? 'அனைத்தையும் அழித்து காலியான டிரைவ் அமை' : 'Wipe All Storage & Save Empty to Drive'}</span>
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Optional Google Apps Script Shared Relay (Multi-Browser Direct Drive Write without per-user Google Sign-In) */}
@@ -1485,14 +1498,16 @@ export const DriveBackupView: React.FC<DriveBackupViewProps> = ({
                       >
                         ↩️ {t.restoreFromDrive}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteConfirmItem(item)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"
-                        title={lang === 'ta' ? 'டிரைவிலிருந்து நீக்கு' : 'Delete from Drive'}
-                      >
-                        🗑️
-                      </button>
+                      {isSuperAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmItem(item)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"
+                          title={lang === 'ta' ? 'டிரைவிலிருந்து நீக்கு (Super Admin)' : 'Delete from Drive (Super Admin)'}
+                        >
+                          🗑️
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

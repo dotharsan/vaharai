@@ -95,7 +95,8 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
         const matchNameTa = r.ownerNameTa?.toLowerCase().includes(q);
         const matchNameEn = r.ownerNameEn?.toLowerCase().includes(q);
         const matchFam = r.familyCode?.toLowerCase().includes(q);
-        return matchPermit || matchLot || matchPlan || matchNic || matchNameTa || matchNameEn || matchFam;
+        const matchPl = r.plAccountNo?.toLowerCase().includes(q);
+        return matchPermit || matchLot || matchPlan || matchNic || matchNameTa || matchNameEn || matchFam || matchPl;
       }
       return true;
     });
@@ -148,6 +149,7 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
         east: '',
         west: '',
       },
+      plAccountNo: '',
       notes: '',
     });
     setEditingRecord({} as LandRecord);
@@ -191,6 +193,7 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
       issueDate: formData.issueDate || new Date().toISOString().slice(0, 10),
       annualTaxStatus: formData.annualTaxStatus || 'PAID',
       boundaries: formData.boundaries || { north: '', south: '', east: '', west: '' },
+      plAccountNo: formData.plAccountNo?.trim() || undefined,
       notes: formData.notes?.trim() || '',
       createdAt: isNewRecord ? new Date().toISOString() : formData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -239,9 +242,12 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
     alert(lang === 'ta' ? 'அனைத்து காணி விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All land records have been wiped.');
   };
 
-  // Delete Record
+  // Delete Record (Super Admin only)
   const handleDeleteRecord = (rec: LandRecord) => {
-    if (!canEdit) return;
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'காணி பதிவை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete land records.');
+      return;
+    }
     const confirmMsg = lang === 'ta'
       ? `காணி அனுமதிப்பத்திரம் ${rec.permitNo} (${rec.ownerNameTa}) நிச்சயமாக நிரந்தரமாக நீக்கப்பட வேண்டுமா?`
       : `Are you sure you want to permanently delete land permit ${rec.permitNo}?`;
@@ -560,6 +566,11 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
                         }`}>
                           {r.landType.replace('_', ' ')}
                         </span>
+                        {r.plAccountNo && (
+                          <div className="mt-0.5 text-[10px] font-mono font-bold text-amber-900">
+                            PL A/C: {r.plAccountNo}
+                          </div>
+                        )}
                       </td>
 
                       {/* Division */}
@@ -619,25 +630,25 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
                           </button>
 
                           {canEdit && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEdit(r)}
-                                className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition-colors"
-                                title={t.editRecord}
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(r)}
+                              className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition-colors"
+                              title={t.editRecord}
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                          )}
 
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRecord(r)}
-                                className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
-                                title={t.deleteRecord}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </>
+                          {isSuperAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRecord(r)}
+                              className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
+                              title={t.deleteRecord}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -796,10 +807,28 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
                     <option value="CROWN_PERMIT">அரச அனுமதிப்பத்திர காணி (Crown LDO)</option>
                     <option value="AGRICULTURAL">விவசாய காணி (Agricultural)</option>
                     <option value="RESIDENTIAL">குடியிருப்பு காணி (Residential)</option>
-                    <option value="PADDY_FIELD">நன்செய் வயல் (Paddy Field)</option>
+                    <option value="PADDY_FIELD">நன்செய் வயல் / தாழ்நிலக் காணி (Paddy / Lowland)</option>
                     <option value="COMMERCIAL">வர்த்தக காணி (Commercial)</option>
                     <option value="DISPUTED_LAND">பிணக்குக்குரிய காணி (Disputed)</option>
                   </select>
+                </div>
+
+                {/* Lowland PL Account Number */}
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">
+                    தாழ்நிலக் காணிக்கான பி.எல் கணக்கு இலக்கம் (Lowland PL Account No.)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.plAccountNo || ''}
+                    onChange={(e) => setFormData({ ...formData, plAccountNo: e.target.value })}
+                    placeholder="உ-ம்: PL-211-0458 (தாழ்நிலக் காணி / நன்செய் வயல் இருப்பின்)"
+                    className={`w-full px-3 py-2 border rounded-lg font-mono font-bold focus:ring-2 focus:ring-emerald-600 ${
+                      formData.landType === 'PADDY_FIELD'
+                        ? 'border-amber-400 bg-amber-50/50 text-slate-900'
+                        : 'border-slate-300 bg-white'
+                    }`}
+                  />
                 </div>
 
                 {/* Owner NIC */}
@@ -1041,6 +1070,12 @@ export const LandManagementView: React.FC<LandManagementViewProps> = ({
                   <span className="text-[10px] text-slate-500 uppercase block">Extent (A-R-P):</span>
                   <span className="font-bold text-slate-900">{viewingRecord.extent}</span>
                 </div>
+                {viewingRecord.plAccountNo && (
+                  <div className="col-span-2">
+                    <span className="text-[10px] text-slate-500 uppercase block">தாழ்நிலக் காணி பி.எல் கணக்கு இலக்கம் (Lowland PL Account No.):</span>
+                    <span className="font-bold text-amber-900">{viewingRecord.plAccountNo}</span>
+                  </div>
+                )}
               </div>
 
               <div className="pt-2 border-t border-slate-200">

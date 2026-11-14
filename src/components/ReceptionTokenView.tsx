@@ -451,7 +451,10 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
 
   // Super Admin Token Delete & Clear Queue Tools
   const handleDeleteToken = (tokenId: string) => {
-    if (!isSuperAdmin && currentUser?.role !== 'ADMIN 1' && currentUser?.role !== 'ADMIN 2') return;
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'டோக்கனை நீக்கும் அதிகாரம் சுப்பர் அட்மினுக்கு மட்டுமே உண்டு.' : 'Only Super Admin can delete queue tokens.');
+      return;
+    }
     const confirmMsg = lang === 'ta'
       ? 'இந்த டோக்கனை நிச்சயமாக நிரந்தரமாக நீக்க வேண்டுமா?'
       : 'Are you sure you want to delete this token permanently?';
@@ -1477,13 +1480,13 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
                           </button>
                         )}
 
-                        {/* Super Admin / Admin Delete Button */}
-                        {(isSuperAdmin || currentUser?.role === 'ADMIN 1' || currentUser?.role === 'ADMIN 2') && (
+                        {/* Super Admin Delete Button */}
+                        {isSuperAdmin && (
                           <button
                             type="button"
                             onClick={() => handleDeleteToken(tok.id)}
                             className="p-1.5 text-rose-700 hover:bg-rose-50 border border-rose-200 rounded text-xs font-bold"
-                            title={lang === 'ta' ? 'டோக்கன் நீக்குக' : 'Delete Token'}
+                            title={lang === 'ta' ? 'டோக்கன் நீக்குக (Super Admin)' : 'Delete Token (Super Admin)'}
                           >
                             🗑️
                           </button>
@@ -1921,16 +1924,18 @@ export const ReceptionTokenView: React.FC<ReceptionTokenViewProps> = ({
               </div>
 
               <div className="flex justify-between items-center pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleDeleteToken(selectedTokenForEdit.id);
-                    setSelectedTokenForEdit(null);
-                  }}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition-colors"
-                >
-                  🗑️ {lang === 'ta' ? 'டோக்கனை அழி' : 'Delete'}
-                </button>
+                {isSuperAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDeleteToken(selectedTokenForEdit.id);
+                      setSelectedTokenForEdit(null);
+                    }}
+                    className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg text-xs font-bold transition-colors"
+                  >
+                    🗑️ {lang === 'ta' ? 'டோக்கனை அழி' : 'Delete'}
+                  </button>
+                ) : <span />}
 
                 <div className="flex gap-2">
                   <button

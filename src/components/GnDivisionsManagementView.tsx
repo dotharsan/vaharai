@@ -43,6 +43,7 @@ export const GnDivisionsManagementView: React.FC<GnDivisionsManagementViewProps>
   onAuditLog,
 }) => {
   const t = translations[lang];
+  const isSuperAdmin = currentUser.role === 'SUPERADMIN';
 
   // Effective DS division ID
   const effectiveDsId = currentDsDivision?.id || currentUser.dsDivisionId || 'DS_VAHARAI';
@@ -205,8 +206,12 @@ export const GnDivisionsManagementView: React.FC<GnDivisionsManagementViewProps>
     );
   };
 
-  // Delete GN Division
+  // Delete GN Division (Super Admin only)
   const handleDeleteDivision = (divToDelete: GNDivision) => {
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'பிரிவை நீக்கும் அதிகாரம் சுப்பர் அட்மினுக்கு மட்டுமே உண்டு.' : 'Only Super Admin can delete GN divisions.');
+      return;
+    }
     if (
       !confirm(
         lang === 'ta'
@@ -440,13 +445,15 @@ export const GnDivisionsManagementView: React.FC<GnDivisionsManagementViewProps>
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleDeleteDivision(d)}
-                            className="p-1.5 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-lg border border-slate-200 transition-colors"
-                            title={lang === 'ta' ? 'நீக்கு' : 'Delete'}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {isSuperAdmin && (
+                            <button
+                              onClick={() => handleDeleteDivision(d)}
+                              className="p-1.5 text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-lg border border-slate-200 transition-colors"
+                              title={lang === 'ta' ? 'நீக்கு (Super Admin)' : 'Delete (Super Admin)'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -235,9 +235,9 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
     return entries;
   }, [beneficiaries, familyDivisionFilter, familySearchQuery]);
 
-  // Super Admin & Admin Deletion Powers for Section / CSV imported records
+  // Super Admin ONLY Deletion Powers for Section / CSV imported records
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
-  const canDelete = isSuperAdmin || currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2';
+  const canDelete = isSuperAdmin;
   const [selectedRegisteredIds, setSelectedRegisteredIds] = useState<string[]>([]);
   const [registeredSearchQuery, setRegisteredSearchQuery] = useState<string>('');
 
@@ -346,7 +346,7 @@ export const CsvManagementView: React.FC<CsvManagementViewProps> = ({
 
   const handleDeleteSingleRegistered = (item: any) => {
     if (!canDelete) {
-      alert(lang === 'ta' ? 'பதிவுகளை நீக்கும் அதிகாரம் சூப்பர் அட்மின் மற்றும் அட்மினுக்கு மட்டுமே உண்டு.' : 'Permission denied. Only Super Admin and Admin can delete records.');
+      alert(lang === 'ta' ? 'பதிவுகளை நீக்கும் அதிகாரம் சுப்பர் அட்மினுக்கு (Super Admin) மட்டுமே உண்டு.' : 'Permission denied. Only Super Admin can delete records.');
       return;
     }
     const name = item.nameTa || item.nameEn || item.name || item.permitNo || item.id;

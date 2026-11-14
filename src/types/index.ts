@@ -602,6 +602,7 @@ export interface LandRecord {
   planNo: string; // வரைபட இலக்கம்
   extent: string; // விஸ்தீரணம் (e.g. "0A-1R-20P" or "0.5 Acres")
   landType: LandType;
+  plAccountNo?: string; // தாழ்நிலக் காணி / நன்செய் வயலுக்கான பி.எல் (PL) கணக்கு இலக்கம்
   divisionCode: string; // GN Division e.g. "211"
   dsDivisionId?: string; // e.g. "DS_VAHARAI"
   ownerNic: string; // உரிமையாளர் NIC
@@ -639,6 +640,7 @@ export interface HouseholdCommonAssets {
   highlandExtent?: 'NONE' | 'LESS_THAN_HALF_ACRE' | 'HALF_TO_ONE_ACRE' | 'MORE_THAN_ONE_ACRE';
   hasPaddyLand?: boolean;
   paddyLandExtent?: 'NONE' | 'LESS_THAN_ONE_ACRE' | 'ONE_TO_TWO_ACRES' | 'MORE_THAN_TWO_ACRES';
+  paddyLandPlAccountNo?: string; // தாழ்நிலக் காணிக்கான பி.எல் (PL) கணக்கு இலக்கம்
 
   // Section 03: பிற சொத்துக்கள்
   vehicleType: 'NONE' | 'BICYCLE' | 'MOTORCYCLE' | 'THREE_WHEELER' | 'CAR' | 'VAN_JEEP' | 'BUS' | 'LORRY' | 'HAND_TRACTOR' | 'FOUR_WHEEL_TRACTOR'; // 3.1
@@ -709,6 +711,16 @@ export interface HouseholdCommonAssets {
 
   // Section 13: தாய் அல்லது தந்தை மாத்திரம் உள்ள குடும்பம் (Single Parent)
   isSingleParent: boolean;
+
+  // Section 14: நலன்புரி உதவிகள் (Welfare Assistance - Aswesuma & Samurdhi)
+  welfareAssistance?: {
+    aswesumaCategory: 'NONE' | 'POOR' | 'EXTREME_POOR' | 'TRANSIENT' | 'VULNERABLE';
+    aswesumaAmount?: number;
+    receivingSamurdhi: boolean;
+    samurdhiAmount?: number;
+    samurdhiAccountNo?: string;
+    samurdhiBankLoanAmount?: number;
+  };
 }
 
 export interface BankDetails {

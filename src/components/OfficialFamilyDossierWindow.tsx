@@ -5,6 +5,7 @@ import {
   HouseholdCommonAssets,
   Beneficiary,
   GNDivision,
+  AssistanceRecord,
   PovertyScoringWeights,
   FamilyRelationship,
   ChronicIllness,
@@ -35,6 +36,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Award,
+  ArrowLeft,
+  ArrowRight,
+  Gift,
 } from 'lucide-react';
 
 export interface MemberDraft {
@@ -68,10 +72,12 @@ interface OfficialFamilyDossierWindowProps {
   editingHousehold?: HouseholdData | null;
   existingHouseholdsCount: number;
   existingBeneficiaries: Beneficiary[];
+  assistanceRecords?: AssistanceRecord[];
   divisions: GNDivision[];
   lang: Language;
   povertyWeights: PovertyScoringWeights;
   canEdit: boolean;
+  isSuperAdmin?: boolean;
   onClose: () => void;
   onSaveFamily: (payload: {
     household: HouseholdData;
@@ -94,6 +100,7 @@ const DEFAULT_ASSETS: HouseholdCommonAssets = {
   highlandExtent: 'NONE',
   hasPaddyLand: false,
   paddyLandExtent: 'NONE',
+  paddyLandPlAccountNo: '',
   vehicleType: 'NONE',
   machineryType: 'NONE',
   livestockType: 'NONE',
@@ -146,6 +153,14 @@ const DEFAULT_ASSETS: HouseholdCommonAssets = {
   toiletLocation: 'OUTDOOR_EXCLUSIVE',
   toiletNature: 'WATER_SEAL_PIT',
   isSingleParent: false,
+  welfareAssistance: {
+    aswesumaCategory: 'NONE',
+    aswesumaAmount: 0,
+    receivingSamurdhi: false,
+    samurdhiAmount: 0,
+    samurdhiAccountNo: '',
+    samurdhiBankLoanAmount: 0,
+  },
 };
 
 const EDUCATION_OPTIONS = [
@@ -163,10 +178,12 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   editingHousehold,
   existingHouseholdsCount,
   existingBeneficiaries,
+  assistanceRecords = [],
   divisions,
   lang,
   povertyWeights,
   canEdit,
+  isSuperAdmin = false,
   onClose,
   onSaveFamily,
 }) => {
@@ -258,6 +275,19 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         highlandExtent: editingHousehold.commonAssets.highlandExtent || (editingHousehold.commonAssets.ownsLand ? 'LESS_THAN_HALF_ACRE' : 'NONE'),
         hasPaddyLand: editingHousehold.commonAssets.hasPaddyLand ?? editingHousehold.commonAssets.ownsOtherLand,
         paddyLandExtent: editingHousehold.commonAssets.paddyLandExtent || (editingHousehold.commonAssets.ownsOtherLand ? 'LESS_THAN_ONE_ACRE' : 'NONE'),
+        paddyLandPlAccountNo: editingHousehold.commonAssets.paddyLandPlAccountNo || '',
+        welfareAssistance: {
+          aswesumaCategory: editingHousehold.commonAssets.welfareAssistance?.aswesumaCategory || 'NONE',
+          aswesumaAmount: editingHousehold.commonAssets.welfareAssistance?.aswesumaAmount ?? 0,
+          receivingSamurdhi:
+            editingHousehold.commonAssets.welfareAssistance?.receivingSamurdhi ??
+            ((editingHousehold.commonAssets.income?.samurdhi || 0) > 0),
+          samurdhiAmount:
+            editingHousehold.commonAssets.welfareAssistance?.samurdhiAmount ??
+            (editingHousehold.commonAssets.income?.samurdhi || 0),
+          samurdhiAccountNo: editingHousehold.commonAssets.welfareAssistance?.samurdhiAccountNo || '',
+          samurdhiBankLoanAmount: editingHousehold.commonAssets.welfareAssistance?.samurdhiBankLoanAmount ?? 0,
+        },
       };
       setAssets(mergedAssets);
 
@@ -392,6 +422,31 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   const membersGlance = useMemo(() => computeMembersAtAGlance(memberSnapshotsForCalc), [memberSnapshotsForCalc]);
   const liveScore = useMemo(() => calculateFamilyPovertyScore(assets, memberSnapshotsForCalc, povertyWeights), [assets, memberSnapshotsForCalc, povertyWeights]);
 
+  // Match all DS Assistance & Relief Audit records for this household or any of its members
+  const familyAssistanceHistory = useMemo(() => {
+    const famKey = effectiveFamilyCode.trim().toUpperCase();
+    const hhRefKey = meta.householdReference.trim().toUpperCase();
+    const nicSet = new Set<string>();
+    if (meta.applicantNic.trim()) nicSet.add(meta.applicantNic.trim().toUpperCase());
+    members.forEach((m) => {
+      if (m.nic && m.nic.trim()) nicSet.add(m.nic.trim().toUpperCase());
+    });
+
+    return assistanceRecords
+      .filter((rec) => {
+        const recFam = (rec.familyCode || '').trim().toUpperCase();
+        const recQr = (rec.familyQrPayload || '').trim().toUpperCase();
+        const recHh = (rec.householdNo || '').trim().toUpperCase();
+        const recNic = (rec.beneficiaryNic || '').trim().toUpperCase();
+        return (
+          (famKey && (recFam === famKey || recQr === famKey)) ||
+          (hhRefKey && recHh === hhRefKey) ||
+          (recNic && nicSet.has(recNic))
+        );
+      })
+      .sort((a, b) => (b.distributedDate || b.createdAt || '').localeCompare(a.distributedDate || a.createdAt || ''));
+  }, [assistanceRecords, effectiveFamilyCode, meta.householdReference, meta.applicantNic, members]);
+
   if (!isOpen) return null;
 
   const handleAddMemberRows = (count: number) => {
@@ -434,10 +489,10 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   };
 
   const handlePrintA4 = () => {
-    setActiveTab('summary-a4');
-    setTimeout(() => {
-      window.print();
-    }, 150);
+    if (activeTab !== 'summary-a4') {
+      setActiveTab('summary-a4');
+    }
+    window.print();
   };
 
   const handleSave = () => {
@@ -638,11 +693,30 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
     }
   };
 
+  const aswesumaLabel = (val?: string) => {
+    switch (val) {
+      case 'POOR': return isTa ? 'வறுமை (Poor)' : 'Poor (வறுமை)';
+      case 'EXTREME_POOR': return isTa ? 'மிகவறுமை (Extreme Poor)' : 'Extreme Poor (மிகவறுமை)';
+      case 'TRANSIENT': return isTa ? 'Transient (தற்காலிக / நிலையற்ற)' : 'Transient';
+      case 'VULNERABLE': return isTa ? 'Vulnerable (பாதிக்கப்படக்கூடிய)' : 'Vulnerable';
+      default: return isTa ? 'இல்லை / பொருந்தாது (None)' : 'None';
+    }
+  };
+
+  const welfare = assets.welfareAssistance || {
+    aswesumaCategory: 'NONE' as const,
+    aswesumaAmount: 0,
+    receivingSamurdhi: false,
+    samurdhiAmount: 0,
+    samurdhiAccountNo: '',
+    samurdhiBankLoanAmount: 0,
+  };
+
   const divObj = divisions.find((d) => d.code === meta.divisionCode);
   const netBalance = (assets.income.total || 0) - (assets.expenses.total || 0);
 
   const content = (
-    <div className="fixed inset-0 z-[100] bg-slate-100 flex flex-col overflow-hidden">
+    <div className="official-dossier-portal fixed inset-0 z-[100] bg-slate-100 flex flex-col overflow-hidden">
       {/* Top Official Government Window Bar */}
       <div className="bg-emerald-950 text-white px-4 sm:px-6 py-3 border-b-4 border-amber-500 flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-md no-print">
         <div className="flex items-center gap-3">
@@ -688,7 +762,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
             className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-900 rounded-lg text-xs font-extrabold flex items-center gap-1.5 shadow-xs transition-colors"
           >
             <Printer className="w-4 h-4 text-emerald-800" />
-            <span>{isTa ? 'A4 அச்சிடு (Print A4)' : 'Print A4 Summary'}</span>
+            <span>{isTa ? 'A4 அச்சிடு / PDF சேமி' : 'Print / Save A4 PDF'}</span>
           </button>
 
           {canEdit && (
@@ -756,16 +830,38 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
           </button>
         </div>
 
-        <div className="text-[11px] text-slate-500 font-semibold hidden md:block">
-          {isTa ? 'அனைத்து தரவுகளும் நேரடியாக 100-புள்ளி வறுமைச்சுட்டி கணிப்பிற்கு உட்படுத்தப்படுகின்றன' : 'All fields dynamically drive the 100-Point Poverty Index'}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+            <button
+              type="button"
+              disabled={activeTab === 'family-entry'}
+              onClick={() => setActiveTab(activeTab === 'summary-a4' ? 'members' : 'family-entry')}
+              className="px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 bg-white hover:bg-emerald-50 text-slate-800 disabled:opacity-40 disabled:bg-transparent transition-colors shadow-2xs"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-emerald-800" />
+              <span>{isTa ? 'பின்' : 'Back'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={activeTab === 'summary-a4'}
+              onClick={() => setActiveTab(activeTab === 'family-entry' ? 'members' : 'summary-a4')}
+              className="px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 bg-white hover:bg-emerald-50 text-slate-800 disabled:opacity-40 disabled:bg-transparent transition-colors shadow-2xs"
+            >
+              <span>{isTa ? 'முன்' : 'Forward'}</span>
+              <ArrowRight className="w-3.5 h-3.5 text-emerald-800" />
+            </button>
+          </div>
+          <div className="text-[11px] text-slate-500 font-semibold hidden xl:block">
+            {isTa ? 'அனைத்து தரவுகளும் நேரடியாக 100-புள்ளி வறுமைச்சுட்டி கணிப்பிற்கு உட்படுத்தப்படுகின்றன' : 'All fields dynamically drive the 100-Point Poverty Index'}
+          </div>
         </div>
       </div>
 
       {/* Main Scrollable Workspace */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-6">
+      <div className="official-dossier-scroll flex-1 overflow-y-auto p-3 sm:p-6">
         {/* ================= TAB 1: FAMILY INFO, ASSETS, HOUSING, SANITATION, ECONOMIC ================= */}
         {activeTab === 'family-entry' && (
-          <div className="max-w-6xl mx-auto space-y-5">
+          <div className="dossier-nonprint-tab max-w-6xl mx-auto space-y-5">
             {/* Live Members at a Glance Strip */}
             <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -1055,7 +1151,9 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Paddy land (வயல் காணி)</label>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    தாழ்நிலக் காணி / வயல் (Lowland / Paddy Land)
+                  </label>
                   <select
                     value={assets.hasPaddyLand ? (assets.paddyLandExtent || 'LESS_THAN_ONE_ACRE') : 'NONE'}
                     onChange={(e) => {
@@ -1074,6 +1172,23 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                     <option value="ONE_TO_TWO_ACRES">1 – 2 ஏக்கர் (1–2 Acres)</option>
                     <option value="MORE_THAN_TWO_ACRES">2 ஏக்கருக்கு மேல் (&gt;2 Acres)</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    தாழ்நிலக் காணி PL கணக்கு இலக்கம் (Lowland PL Account No.) {assets.hasPaddyLand ? '*' : ''}
+                  </label>
+                  <input
+                    type="text"
+                    value={assets.paddyLandPlAccountNo || ''}
+                    onChange={(e) => setAssets({ ...assets, paddyLandPlAccountNo: e.target.value })}
+                    placeholder={assets.hasPaddyLand ? 'உ-ம்: PL-211-0458 (கட்டாயம்)' : 'தாழ்நிலக் காணி இருந்தால் PL இலக்கம்'}
+                    className={`w-full px-3 py-2 border rounded-lg font-mono font-bold ${
+                      assets.hasPaddyLand
+                        ? 'border-amber-400 bg-amber-50/50 text-slate-900'
+                        : 'border-slate-300 bg-white'
+                    }`}
+                  />
                 </div>
 
                 <div>
@@ -1523,6 +1638,180 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
               </div>
             </div>
 
+            {/* SECTION 06: நலன்புரி உதவிகள் (Welfare Assistance - Aswesuma & Samurdhi) */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-7 h-7 rounded-lg bg-amber-600 text-white font-black text-xs flex items-center justify-center">06</span>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">
+                      நலன்புரி உதவிகள் — {isTa ? 'அஸ்வெசும & சமூர்த்தி விபரங்கள்' : 'Welfare Assistance (Aswesuma & Samurdhi)'}
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      அஸ்வெசும கொடுப்பனவு (வறுமை / மிகவறுமை / Transient / Vulnerable) மற்றும் சமூர்த்தி கொடுப்பனவு, கணக்கு இலக்கம் &amp; வங்கி கடன் விபரம்
+                    </p>
+                  </div>
+                </div>
+                {welfare.aswesumaCategory !== 'NONE' && (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black">
+                    அஸ்வெசும: {aswesumaLabel(welfare.aswesumaCategory)}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Aswesuma Card */}
+                <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/40 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-black text-amber-950">
+                    <Gift className="w-4 h-4 text-amber-700" />
+                    <span>அஸ்வெசும கொடுப்பனவு (Aswesuma Allowance)</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">அஸ்வெசும பிரிவு (Category)</label>
+                      <select
+                        value={welfare.aswesumaCategory}
+                        onChange={(e) =>
+                          setAssets({
+                            ...assets,
+                            welfareAssistance: {
+                              ...welfare,
+                              aswesumaCategory: e.target.value as NonNullable<HouseholdCommonAssets['welfareAssistance']>['aswesumaCategory'],
+                            },
+                          })
+                        }
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg bg-white font-bold text-slate-900"
+                      >
+                        <option value="NONE">இல்லை / பொருந்தாது (None)</option>
+                        <option value="POOR">வறுமை (Poor)</option>
+                        <option value="EXTREME_POOR">மிகவறுமை (Extreme Poor)</option>
+                        <option value="TRANSIENT">Transient (தற்காலிக / நிலையற்ற)</option>
+                        <option value="VULNERABLE">Vulnerable (பாதிக்கப்படக்கூடிய)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">அஸ்வெசும மாதாந்த தொகை (Rs.)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={welfare.aswesumaCategory === 'NONE'}
+                        value={welfare.aswesumaAmount || 0}
+                        onChange={(e) =>
+                          setAssets({
+                            ...assets,
+                            welfareAssistance: {
+                              ...welfare,
+                              aswesumaAmount: Math.max(0, Number(e.target.value)),
+                            },
+                          })
+                        }
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono font-bold bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Samurdhi Card */}
+                <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/40 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-black text-emerald-950">
+                    <Landmark className="w-4 h-4 text-emerald-700" />
+                    <span>சமூர்த்தி கொடுப்பனவு &amp; வங்கி விபரம் (Samurdhi Details)</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">சமூர்த்தி கொடுப்பனவு (Samurdhi Allowance)</label>
+                      <select
+                        value={welfare.receivingSamurdhi ? 'YES' : 'NO'}
+                        onChange={(e) => {
+                          const receiving = e.target.value === 'YES';
+                          const nextAmount = receiving ? welfare.samurdhiAmount || 0 : 0;
+                          setAssets({
+                            ...assets,
+                            income: { ...assets.income, samurdhi: nextAmount },
+                            welfareAssistance: {
+                              ...welfare,
+                              receivingSamurdhi: receiving,
+                              samurdhiAmount: nextAmount,
+                            },
+                          });
+                        }}
+                        className="w-full px-3 py-2 border border-emerald-300 rounded-lg bg-white font-bold text-slate-900"
+                      >
+                        <option value="NO">இல்லை (No)</option>
+                        <option value="YES">ஆம் — பெறுகிறார் (Yes)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">சமூர்த்தி கொடுப்பனவு தொகை (Rs.)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={!welfare.receivingSamurdhi}
+                        value={welfare.samurdhiAmount || 0}
+                        onChange={(e) => {
+                          const nextAmt = Math.max(0, Number(e.target.value));
+                          setAssets({
+                            ...assets,
+                            income: { ...assets.income, samurdhi: nextAmt },
+                            welfareAssistance: {
+                              ...welfare,
+                              samurdhiAmount: nextAmt,
+                            },
+                          });
+                        }}
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono font-bold bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">சமூர்த்தி கணக்கு இலக்கம் (Samurdhi A/C No.)</label>
+                      <input
+                        type="text"
+                        value={welfare.samurdhiAccountNo || ''}
+                        onChange={(e) =>
+                          setAssets({
+                            ...assets,
+                            welfareAssistance: {
+                              ...welfare,
+                              samurdhiAccountNo: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="உதா: SAM-VHR-001245"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono font-bold bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">சமூர்த்தி வங்கி கடன் பெற்ற தொகை (Rs.)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={welfare.samurdhiBankLoanAmount || 0}
+                        onChange={(e) =>
+                          setAssets({
+                            ...assets,
+                            welfareAssistance: {
+                              ...welfare,
+                              samurdhiBankLoanAmount: Math.max(0, Number(e.target.value)),
+                            },
+                          })
+                        }
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono font-bold bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Bottom Action Bar in Tab 1 */}
             <div className="flex items-center justify-between pt-2">
               <button
@@ -1547,7 +1836,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
 
         {/* ================= TAB 2: ADD MULTIPLE MEMBERS UNDER HEAD QR ================= */}
         {activeTab === 'members' && (
-          <div className="max-w-6xl mx-auto space-y-4">
+          <div className="dossier-nonprint-tab max-w-6xl mx-auto space-y-4">
             {/* Head of Household Master QR Banner */}
             <div className="bg-gradient-to-r from-emerald-900 to-teal-900 text-white rounded-2xl p-4 sm:p-5 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-4">
@@ -1631,7 +1920,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         )}
                       </div>
 
-                      {idx > 0 && canEdit && (
+                      {(isSuperAdmin || !m.id) && idx > 0 && canEdit && (
                         <button
                           type="button"
                           onClick={() => handleRemoveMember(idx)}
@@ -1917,20 +2206,31 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         )}
 
         {/* ================= TAB 3: COMPLETE OFFICIAL A4 PRINTABLE SUMMARY ================= */}
-        {activeTab === 'summary-a4' && (
-          <div className="max-w-[210mm] mx-auto">
-            <div className="mb-3 flex items-center justify-between no-print">
-              <span className="text-xs font-bold text-slate-600">
-                📄 {isTa ? 'A4 அளவிலான உத்தியோகபூர்வ குடும்ப தரவு & வறுமைச்சுட்டி அறிக்கை' : 'A4 Official Household Dossier & Poverty Assessment Summary'}
-              </span>
-              <button
-                type="button"
-                onClick={handlePrintA4}
-                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 shadow-xs"
-              >
-                <Printer className="w-4 h-4" />
-                <span>{isTa ? 'A4 தாளில் அச்சிடு (Print A4)' : 'Print on A4'}</span>
-              </button>
+        <div className={activeTab === 'summary-a4' ? 'dossier-summary-wrap max-w-[210mm] mx-auto' : 'dossier-summary-wrap hidden print:block max-w-[210mm] mx-auto'}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 no-print">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('members')}
+                  className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 rounded-lg text-xs font-bold flex items-center gap-1"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>{isTa ? 'பின் (உறுப்பினர்கள்)' : 'Back (Members)'}</span>
+                </button>
+                <span className="text-xs font-bold text-slate-600">
+                  📄 {isTa ? 'A4 அளவிலான உத்தியோகபூர்வ குடும்ப தரவு & வறுமைச்சுட்டி அறிக்கை' : 'A4 Official Household Dossier & Poverty Assessment Summary'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrintA4}
+                  className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 shadow-xs"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>{isTa ? 'A4 தாளில் அச்சிடு / PDF சேமி (Print A4)' : 'Print A4 / Save PDF'}</span>
+                </button>
+              </div>
             </div>
 
             <div
@@ -2128,8 +2428,14 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                       <span className="font-bold">{assets.hasHighland ? assets.highlandExtent : 'None'}</span>
                     </div>
                     <div className="flex justify-between border-b border-slate-100 pb-0.5">
-                      <span className="font-bold text-slate-600">Paddy land:</span>
-                      <span className="font-bold">{assets.hasPaddyLand ? assets.paddyLandExtent : 'None'}</span>
+                      <span className="font-bold text-slate-600">Lowland / Paddy land (தாழ்நிலக் காணி):</span>
+                      <span className="font-bold">
+                        {assets.hasPaddyLand
+                          ? `${assets.paddyLandExtent}${assets.paddyLandPlAccountNo ? ` | PL A/C: ${assets.paddyLandPlAccountNo}` : ''}`
+                          : assets.paddyLandPlAccountNo
+                          ? `PL A/C: ${assets.paddyLandPlAccountNo}`
+                          : 'None'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-slate-100 pb-0.5">
                       <span className="font-bold text-slate-600">Vehicle:</span>
@@ -2225,10 +2531,51 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                 </div>
               </div>
 
-              {/* H. Poverty Index Scoring Matrix */}
+              {/* H. நலன்புரி உதவிகள் (Welfare Assistance - Aswesuma & Samurdhi) */}
+              <div className="border border-slate-300 rounded-lg overflow-hidden">
+                <div className="bg-amber-800 text-white px-3 py-1.5 font-extrabold text-[11px]">
+                  H. நலன்புரி உதவிகள் (WELFARE ASSISTANCE — அஸ்வெசும &amp; சமூர்த்தி)
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 p-2.5 text-[10px] bg-amber-50/30">
+                  <div>
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">அஸ்வெசும கொடுப்பனவு (Aswesuma)</span>
+                    <span className="font-black text-amber-950">{aswesumaLabel(welfare.aswesumaCategory)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">அஸ்வெசும தொகை (Aswesuma Amount)</span>
+                    <span className="font-mono font-bold">
+                      {welfare.aswesumaCategory !== 'NONE' && (welfare.aswesumaAmount || 0) > 0
+                        ? `Rs. ${(welfare.aswesumaAmount || 0).toLocaleString()}`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">சமூர்த்தி கொடுப்பனவு (Samurdhi)</span>
+                    <span className="font-bold">
+                      {welfare.receivingSamurdhi
+                        ? `ஆம் (Yes)${(welfare.samurdhiAmount || 0) > 0 ? ` — Rs. ${(welfare.samurdhiAmount || 0).toLocaleString()}` : ''}`
+                        : 'இல்லை (No)'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">சமூர்த்தி கணக்கு இலக்கம் (Samurdhi A/C No.)</span>
+                    <span className="font-mono font-bold">{welfare.samurdhiAccountNo?.trim() || '—'}</span>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">சமூர்த்தி வங்கி கடன் பெற்ற தொகை (Samurdhi Bank Loan)</span>
+                    <span className="font-mono font-black text-emerald-900">
+                      {(welfare.samurdhiBankLoanAmount || 0) > 0
+                        ? `Rs. ${(welfare.samurdhiBankLoanAmount || 0).toLocaleString()}`
+                        : 'Rs. 0'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* I. Poverty Index Scoring Matrix */}
               <div className="border-2 border-slate-900 rounded-lg overflow-hidden">
                 <div className="bg-slate-900 text-white px-3 py-1.5 font-extrabold text-[11px] flex items-center justify-between">
-                  <span>H. வறுமைச்சுட்டி புள்ளி மதிப்பீடு (MULTI-DIMENSIONAL POVERTY INDEX RESULT)</span>
+                  <span>I. வறுமைச்சுட்டி புள்ளி மதிப்பீடு (MULTI-DIMENSIONAL POVERTY INDEX RESULT)</span>
                   <span className="font-mono text-sm font-black text-amber-300">
                     TOTAL SCORE: {liveScore.score100} / 100 · {priorityLabel(liveScore.priorityRank)}
                   </span>
@@ -2271,6 +2618,61 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                 </div>
               </div>
 
+              {/* J. இதுவரை பிரதேச செயலகத்தின் மூலம் பெற்ற உதவிகள் (Assistance Audit History) */}
+              <div className="border border-slate-300 rounded-lg overflow-hidden">
+                <div className="bg-emerald-900 text-white px-3 py-1.5 font-extrabold text-[11px] flex items-center justify-between">
+                  <span>J. இதுவரை பிரதேச செயலகத்தின் மூலம் பெற்ற உதவிகள் (DS ASSISTANCE RECEIVED — ASSISTANCE AUDIT REGISTRY)</span>
+                  <span className="font-mono">Total Records: {familyAssistanceHistory.length}</span>
+                </div>
+                {familyAssistanceHistory.length === 0 ? (
+                  <div className="p-3 text-[10px] text-slate-600 bg-slate-50">
+                    {isTa
+                      ? 'உதவி தணிக்கை பதிவில் இக்குடும்பத்திற்கான உதவிகள் எதுவும் இதுவரை பதிவு செய்யப்படவில்லை.'
+                      : 'No Divisional Secretariat assistance records found for this family in the Assistance Audit registry.'}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-[10px]">
+                      <thead>
+                        <tr className="bg-slate-100 border-b border-slate-300 font-bold text-slate-800">
+                          <th className="py-1.5 px-2 border-r border-slate-200">#</th>
+                          <th className="py-1.5 px-2 border-r border-slate-200">திகதி (Date)</th>
+                          <th className="py-1.5 px-2 border-r border-slate-200">உதவி வகை &amp; விபரம் (Aid Category &amp; Details)</th>
+                          <th className="py-1.5 px-2 border-r border-slate-200">பெறுமதி (Value)</th>
+                          <th className="py-1.5 px-2 border-r border-slate-200">வழங்கிய பிரிவு / நிறுவனம் (Donor / Unit)</th>
+                          <th className="py-1.5 px-2 border-r border-slate-200">உத்தியோகத்தர் (Officer)</th>
+                          <th className="py-1.5 px-2">நிலை (Status)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {familyAssistanceHistory.map((aid, idx) => (
+                          <tr key={aid.id || idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                            <td className="py-1 px-2 border-r border-slate-200 font-mono font-bold">{idx + 1}</td>
+                            <td className="py-1 px-2 border-r border-slate-200 font-mono whitespace-nowrap">
+                              {aid.distributedDate || aid.createdAt?.slice(0, 10) || '—'}
+                            </td>
+                            <td className="py-1 px-2 border-r border-slate-200 font-semibold">
+                              <div>{aid.aidDescription || aid.aidCategory}</div>
+                              <div className="text-[9px] text-slate-500 font-mono">{aid.aidCategory}</div>
+                            </td>
+                            <td className="py-1 px-2 border-r border-slate-200 font-mono font-bold text-emerald-900">
+                              {aid.amountOrValue || '—'}
+                            </td>
+                            <td className="py-1 px-2 border-r border-slate-200">{aid.donorOrOrganization || 'DS Office'}</td>
+                            <td className="py-1 px-2 border-r border-slate-200">{aid.officerName || '—'}</td>
+                            <td className="py-1 px-2 font-bold">
+                              <span className={aid.status === 'REJECTED_DUPLICATE' ? 'text-rose-700' : 'text-emerald-800'}>
+                                {aid.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
               {/* Official Certification & Signatures */}
               <div className="grid grid-cols-3 gap-6 pt-6 text-center text-[10px]">
                 <div>
@@ -2288,7 +2690,6 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
               </div>
             </div>
           </div>
-        )}
       </div>
     </div>
   );

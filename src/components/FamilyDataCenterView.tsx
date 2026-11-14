@@ -168,10 +168,10 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
     alert(lang === 'ta' ? 'அனைத்து குடும்ப விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All family records have been wiped.');
   };
 
-  // Delete a single household
+  // Delete a single household (Super Admin only)
   const handleDeleteHousehold = (h: HouseholdData) => {
-    if (!canEdit) {
-      alert(lang === 'ta' ? 'குடும்பத்தை அழிக்க அனுமதி இல்லை.' : 'Permission denied to delete family.');
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'குடும்பத்தை அழிக்க சுப்பர் அட்மின் (Super Admin) அனுமதி மட்டுமே தேவை.' : 'Only Super Admin has permission to delete family records.');
       return;
     }
     const confirmed = window.confirm(
@@ -530,6 +530,22 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
                           <span className="bg-emerald-50 text-emerald-900 px-2 py-0.5 rounded font-mono font-bold">
                             வருமானம்: Rs.{(h.commonAssets.income?.total || 0).toLocaleString()} | {h.commonAssets.electricityUnitsKwh || 0} kWh
                           </span>
+                          {h.commonAssets.welfareAssistance?.aswesumaCategory && h.commonAssets.welfareAssistance.aswesumaCategory !== 'NONE' && (
+                            <span className="bg-amber-100 text-amber-950 border border-amber-300 px-2 py-0.5 rounded font-bold">
+                              அஸ்வெசும: {h.commonAssets.welfareAssistance.aswesumaCategory === 'POOR'
+                                ? 'வறுமை'
+                                : h.commonAssets.welfareAssistance.aswesumaCategory === 'EXTREME_POOR'
+                                ? 'மிகவறுமை'
+                                : h.commonAssets.welfareAssistance.aswesumaCategory === 'TRANSIENT'
+                                ? 'Transient'
+                                : 'Vulnerable'}
+                            </span>
+                          )}
+                          {(h.commonAssets.welfareAssistance?.receivingSamurdhi || h.commonAssets.welfareAssistance?.samurdhiAccountNo) && (
+                            <span className="bg-teal-100 text-teal-950 border border-teal-300 px-2 py-0.5 rounded font-bold font-mono">
+                              சமூர்த்தி{h.commonAssets.welfareAssistance?.samurdhiAccountNo ? `: ${h.commonAssets.welfareAssistance.samurdhiAccountNo}` : ''}
+                            </span>
+                          )}
                         </div>
                       );
                     })()}
@@ -599,12 +615,12 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
                       </button>
                     )}
 
-                    {canEdit && (
+                    {isSuperAdmin && (
                       <button
                         type="button"
                         onClick={() => handleDeleteHousehold(h)}
                         className="p-2 text-rose-600 hover:text-rose-800 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-lg transition-colors"
-                        title={lang === 'ta' ? 'இக்குடும்ப விபரத்தை நிரந்தரமாக அழி' : 'Delete household permanently'}
+                        title={lang === 'ta' ? 'இக்குடும்ப விபரத்தை நிரந்தரமாக அழி (Super Admin)' : 'Delete household permanently (Super Admin)'}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -913,10 +929,12 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
         editingHousehold={dossierEditingHousehold}
         existingHouseholdsCount={households.length}
         existingBeneficiaries={beneficiaries}
+        assistanceRecords={assistanceRecords}
         divisions={divisions}
         lang={lang}
         povertyWeights={povertyWeights}
         canEdit={canEdit}
+        isSuperAdmin={isSuperAdmin}
         onClose={() => {
           setDossierWindowOpen(false);
           setDossierEditingHousehold(null);

@@ -205,8 +205,12 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
     alert(lang === 'ta' ? 'அனைத்து முதியோர் விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All senior citizen records have been wiped.');
   };
 
-  // Delete a single senior citizen
+  // Delete a single senior citizen (Super Admin only)
   const handleDeleteSingleElderly = (b: Beneficiary) => {
+    if (!isSuperAdmin) {
+      alert(lang === 'ta' ? 'முதியோர் பதிவை அழிக்க சுப்பர் அட்மின் அனுமதி மட்டுமே தேவை.' : 'Only Super Admin can delete elderly records.');
+      return;
+    }
     const confirmed = window.confirm(
       lang === 'ta'
         ? `${b.nameTa} (${b.nic}) அவர்களின் விபரங்களை நிரந்தரமாக அழிக்க விரும்புகிறீர்களா?`
@@ -995,21 +999,21 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
                           அட்டை
                         </button>
                         {!isDistrictAdmin && (
-                          <>
-                            <button
-                              onClick={() => handleOpenEdit(b)}
-                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded text-[11px] font-bold border border-amber-200 cursor-pointer"
-                            >
-                              திருத்துக
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSingleElderly(b)}
-                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
-                              title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி' : 'Delete permanently'}
-                            >
-                              <Trash2 className="w-3.5 h-3.5 inline" />
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleOpenEdit(b)}
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded text-[11px] font-bold border border-amber-200 cursor-pointer"
+                          >
+                            திருத்துக
+                          </button>
+                        )}
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => handleDeleteSingleElderly(b)}
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-bold border border-rose-200 cursor-pointer"
+                            title={lang === 'ta' ? 'இப்பதிவை நிரந்தரமாக அழி (Super Admin)' : 'Delete permanently (Super Admin)'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 inline" />
+                          </button>
                         )}
                       </td>
                     </tr>
