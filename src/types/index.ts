@@ -381,6 +381,11 @@ export interface Beneficiary {
   elderlyCaretakerPhone?: string; // பராமரிப்பாளர் தொலைபேசி
   elderlyMobilityStatus?: 'NORMAL' | 'WALKER_CANE' | 'WHEELCHAIR' | 'BEDRIDDEN'; // இயங்குதிறன்
   manualQrCode?: string; // பயனரால் சுயமாக வழங்கப்படும் QR / அட்டை குறியீடு (Manual QR provided by officers)
+  educationLevel?: string; // e.g. 'NO_SCHOOLING' | 'PRESCHOOL' | 'BELOW_OL' | 'OL_PASSED' | 'AL_PASSED' | 'DIPLOMA_DEGREE'
+  isAttendingSchool?: boolean; // For ages 5-16: false => Children not in school (5-16)
+  isDependent?: boolean; // தங்கி வாழ்வோர் (Dependent member)
+  hasCkdu?: boolean; // நாள்பட்ட சிறுநீரக நோய் (CKDU)
+  economicActivity?: string; // பொருளாதார செயல்பாடு / தொழில்
   welfareScheme: WelfareScheme; // Primary scheme (for backwards compatibility)
   welfareSchemes?: WelfareScheme[]; // Multiple welfare aid checklist (Requirement 02)
   welfareStatus: WelfareStatus;
@@ -625,10 +630,19 @@ export interface HouseholdCommonAssets {
   landExtent: 'LESS_THAN_HALF_ACRE' | 'MORE_THAN_HALF_ACRE' | 'NONE';
   ownsOtherLand: boolean; // 2.2
   otherLandExtent: 'LESS_THAN_ONE_ACRE' | 'MORE_THAN_ONE_ACRE' | 'NONE';
+  // Extended Official Asset Fields
+  houseAndLandOwnership?: 'OWN_BOTH' | 'OWN_HOUSE_ONLY' | 'OWN_LAND_ONLY' | 'RENTED_LEASED' | 'CROWN_PERMIT' | 'RELATIVES_HOUSE' | 'NO_OWNERSHIP';
+  receivedAsCompensation?: boolean;
+  compensationDetails?: string;
+  otherHouseDetails?: string;
+  hasHighland?: boolean;
+  highlandExtent?: 'NONE' | 'LESS_THAN_HALF_ACRE' | 'HALF_TO_ONE_ACRE' | 'MORE_THAN_ONE_ACRE';
+  hasPaddyLand?: boolean;
+  paddyLandExtent?: 'NONE' | 'LESS_THAN_ONE_ACRE' | 'ONE_TO_TWO_ACRES' | 'MORE_THAN_TWO_ACRES';
 
   // Section 03: பிற சொத்துக்கள்
-  vehicleType: 'NONE' | 'MOTORCYCLE' | 'THREE_WHEELER' | 'CAR' | 'VAN_JEEP' | 'BUS' | 'LORRY' | 'HAND_TRACTOR' | 'FOUR_WHEEL_TRACTOR'; // 3.1
-  machineryType: 'NONE' | 'MOTOR_BOAT' | 'NON_MOTOR_BOAT' | 'HARVESTER' | 'OTHER_EQUIPMENT'; // 3.2
+  vehicleType: 'NONE' | 'BICYCLE' | 'MOTORCYCLE' | 'THREE_WHEELER' | 'CAR' | 'VAN_JEEP' | 'BUS' | 'LORRY' | 'HAND_TRACTOR' | 'FOUR_WHEEL_TRACTOR'; // 3.1
+  machineryType: 'NONE' | 'MOTOR_BOAT' | 'NON_MOTOR_BOAT' | 'HARVESTER' | 'WATER_PUMP' | 'SEWING_MACHINE' | 'OTHER_EQUIPMENT'; // 3.2
   livestockType: 'NONE' | 'CATTLE' | 'GOATS' | 'PIGS' | 'POULTRY' | 'DUCKS' | 'OTHER'; // 3.3
   livestockCount: number;
 
@@ -672,11 +686,14 @@ export interface HouseholdCommonAssets {
   electricityUnitsKwh: number;
 
   // Section 07: வீடு பற்றிய விபரங்கள்
-  unitType: 'SINGLE_1_STORY' | 'SINGLE_2_STORY' | 'ANNEX' | 'SLUM_SHACK' | 'LINE_ROOM' | 'OTHER'; // 7.1
+  unitType: 'SINGLE_1_STORY' | 'SINGLE_2_STORY' | 'ANNEX' | 'SLUM_SHACK' | 'LINE_ROOM' | 'TEMPORARY_HUT' | 'OTHER'; // 7.1
+  housingPermanency?: 'PERMANENT' | 'SEMI_PERMANENT' | 'TEMPORARY';
+  isSingleFloor?: boolean;
   floorMaterial: 'CEMENT' | 'TILES' | 'CONCRETE' | 'CLAY' | 'SAND' | 'DILAPIDATED'; // 7.2
   roofMaterial: 'TILES' | 'ASBESTOS' | 'CONCRETE' | 'SHEET_ALUMINIUM' | 'THATCH_PALM' | 'DILAPIDATED'; // 7.3
   wallMaterial: 'BRICK' | 'CABOOK' | 'CEMENT_BLOCK' | 'CLAY_MUD' | 'PLANK' | 'PALM_LEAF' | 'DILAPIDATED'; // 7.4
-  houseArea: 'LESS_THAN_500_SQFT' | 'MORE_THAN_500_SQFT'; // 7.5
+  houseArea: 'LESS_THAN_500_SQFT' | '500_TO_1000_SQFT' | 'MORE_THAN_1000_SQFT' | 'MORE_THAN_500_SQFT'; // 7.5
+  exactFloorAreaSqFt?: number;
   ownsCurrentHouse: boolean; // 8.1
   ownsOtherHouse: boolean; // 8.2
 
@@ -700,6 +717,13 @@ export interface BankDetails {
   accountNumber: string;
   accountName: string;
   status: 'VERIFIED' | 'PENDING' | 'REJECTED';
+}
+
+export interface PovertyScoreFactorItem {
+  category: 'DEMOGRAPHICS' | 'HOUSING' | 'SANITATION' | 'ECONOMIC';
+  labelTa: string;
+  labelEn: string;
+  points: number;
 }
 
 export interface HouseholdData {
@@ -730,6 +754,7 @@ export interface HouseholdData {
     sanitationScore: number; // max 20
     demographicsScore: number; // max 25
     economicScore: number; // max 30
+    itemizedFactors?: PovertyScoreFactorItem[];
   };
   createdAt: string;
   updatedAt: string;
@@ -757,6 +782,15 @@ export interface PovertyScoringWeights {
   lowIncomePoints: number; // 15
   noVehiclePoints: number; // 5
   dailyWageLaborPoints: number; // 10
+  // Extended multi-dimensional weights
+  ckduPoints?: number; // 6
+  childrenNotInSchoolPoints?: number; // 5
+  belowOLPoints?: number; // 3
+  dependentsPoints?: number; // 4
+  nonPermanentHousePoints?: number; // 6
+  expenditureDeficitPoints?: number; // 4
+  lowElectricityUnitsPoints?: number; // 4
+  noProductiveAssetsPoints?: number; // 5
 }
 
 export const DEFAULT_POVERTY_WEIGHTS: PovertyScoringWeights = {
@@ -764,74 +798,364 @@ export const DEFAULT_POVERTY_WEIGHTS: PovertyScoringWeights = {
   sanitationMax: 20,
   demographicsMax: 25,
   economicMax: 30,
-  thatchRoofPoints: 8,
-  mudWallPoints: 7,
-  sandFloorPoints: 5,
+  thatchRoofPoints: 6,
+  mudWallPoints: 5,
+  sandFloorPoints: 4,
   smallHouseAreaPoints: 5,
   noLandPoints: 5,
   noToiletPoints: 8,
   unprotectedWaterPoints: 6,
   keroseneLightingPoints: 6,
-  singleParentPoints: 8,
-  disabilityMemberPoints: 7,
-  chronicIllnessPoints: 5,
-  elderlyMemberPoints: 5,
-  lowIncomePoints: 15,
-  noVehiclePoints: 5,
-  dailyWageLaborPoints: 10,
+  singleParentPoints: 5,
+  disabilityMemberPoints: 5,
+  chronicIllnessPoints: 4,
+  elderlyMemberPoints: 4,
+  lowIncomePoints: 12,
+  noVehiclePoints: 4,
+  dailyWageLaborPoints: 6,
+  ckduPoints: 6,
+  childrenNotInSchoolPoints: 5,
+  belowOLPoints: 3,
+  dependentsPoints: 4,
+  nonPermanentHousePoints: 6,
+  expenditureDeficitPoints: 4,
+  lowElectricityUnitsPoints: 4,
+  noProductiveAssetsPoints: 5,
 };
 
-// 100-Point Scoring Function
+export interface MembersAtAGlanceSummary {
+  totalMembers: number;
+  belowOLCount: number;
+  childrenNotInSchool5To16Count: number;
+  chronicDiseaseCount: number;
+  disabilityCount: number;
+  ckduCount: number;
+  dependentsCount: number;
+  over70Count: number;
+}
+
+export const computeAgeFromDobSafe = (dob?: string): number => {
+  if (!dob) return 0;
+  const parsed = new Date(dob);
+  if (isNaN(parsed.getTime())) return 0;
+  const today = new Date();
+  let age = today.getFullYear() - parsed.getFullYear();
+  const m = today.getMonth() - parsed.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < parsed.getDate())) {
+    age--;
+  }
+  return Math.max(0, age);
+};
+
+export const isEducationBelowOL = (educationLevel?: string): boolean => {
+  if (!educationLevel) return false;
+  const val = educationLevel.trim().toUpperCase();
+  if (
+    val === 'NO_SCHOOLING' ||
+    val === 'BELOW_OL' ||
+    val === 'PRIMARY' ||
+    val === 'JUNIOR_SECONDARY' ||
+    val === 'PRESCHOOL'
+  ) {
+    return true;
+  }
+  if (val === 'OL_PASSED' || val === 'AL_PASSED' || val === 'DIPLOMA_DEGREE' || val === 'GRADUATE') {
+    return false;
+  }
+  // Free text Tamil/English patterns like "தரம் 8", "Grade 5", "O/L கீழ்"
+  const gradeMatch = val.match(/(?:GRADE|தரம்)\s*(\d+)/);
+  if (gradeMatch && Number(gradeMatch[1]) < 11) return true;
+  if (val.includes('BELOW') || val.includes('கீழ்') || val.includes('படிக்காத') || val.includes('இல்லை')) return true;
+  return false;
+};
+
+export const computeMembersAtAGlance = (members: Array<Partial<Beneficiary>> = []): MembersAtAGlanceSummary => {
+  let belowOLCount = 0;
+  let childrenNotInSchool5To16Count = 0;
+  let chronicDiseaseCount = 0;
+  let disabilityCount = 0;
+  let ckduCount = 0;
+  let dependentsCount = 0;
+  let over70Count = 0;
+
+  for (const m of members) {
+    const age = computeAgeFromDobSafe(m.dob);
+
+    // Over 70 years
+    if (age >= 70 || (m.isElderly && age === 0)) {
+      over70Count++;
+    }
+
+    // Below O/L education (for members aged >= 16 or explicitly marked)
+    if (isEducationBelowOL(m.educationLevel) && (age >= 16 || age === 0 || m.educationLevel === 'BELOW_OL' || m.educationLevel === 'NO_SCHOOLING')) {
+      belowOLCount++;
+    }
+
+    // Children not in school (5-16)
+    if (age >= 5 && age <= 16 && m.isAttendingSchool === false) {
+      childrenNotInSchool5To16Count++;
+    }
+
+    // CKDU
+    const hasCkdu = Boolean(m.hasCkdu || m.chronicIllness === 'CKD_KIDNEY' || m.welfareSchemes?.includes('CHRONIC_KIDNEY') || m.welfareScheme === 'CHRONIC_KIDNEY');
+    if (hasCkdu) {
+      ckduCount++;
+    }
+
+    // Chronic disease (includes CKDU or any other chronic illness except physical-disability-only)
+    const hasChronic = Boolean(
+      hasCkdu ||
+      (m.chronicIllness && m.chronicIllness !== 'NONE' && m.chronicIllness !== 'DISABILITY_PHYSICAL')
+    );
+    if (hasChronic) {
+      chronicDiseaseCount++;
+    }
+
+    // Disability
+    if (m.isPersonWithDisability || m.chronicIllness === 'DISABILITY_PHYSICAL') {
+      disabilityCount++;
+    }
+
+    // Dependents (explicit flag OR child < 18 OR elderly >= 70 OR disabled non-earner)
+    const autoDependent = age > 0 && (age < 18 || age >= 70);
+    if (m.isDependent === true || (m.isDependent !== false && autoDependent)) {
+      dependentsCount++;
+    }
+  }
+
+  return {
+    totalMembers: members.length,
+    belowOLCount,
+    childrenNotInSchool5To16Count,
+    chronicDiseaseCount,
+    disabilityCount,
+    ckduCount,
+    dependentsCount,
+    over70Count,
+  };
+};
+
+// 100-Point Scoring Function (All-inclusive Multi-Dimensional Poverty Assessment)
 export const calculateFamilyPovertyScore = (
   common: HouseholdCommonAssets,
-  members: Beneficiary[] = [],
+  members: Array<Partial<Beneficiary>> = [],
   weights: PovertyScoringWeights = DEFAULT_POVERTY_WEIGHTS
-): { score100: number; priorityRank: 1 | 2 | 3 | 4; breakdown: { housingScore: number; sanitationScore: number; demographicsScore: number; economicScore: number } } => {
-  // 1. Housing & Living Conditions Score (Max weights.housingMax e.g. 25)
+): {
+  score100: number;
+  priorityRank: 1 | 2 | 3 | 4;
+  breakdown: {
+    housingScore: number;
+    sanitationScore: number;
+    demographicsScore: number;
+    economicScore: number;
+    itemizedFactors: PovertyScoreFactorItem[];
+  };
+} => {
+  const w = { ...DEFAULT_POVERTY_WEIGHTS, ...weights };
+  const glance = computeMembersAtAGlance(members);
+  const itemizedFactors: PovertyScoreFactorItem[] = [];
+
+  // 1. Housing & Living Conditions Score (Max w.housingMax e.g. 25)
   let rawHousing = 0;
-  if (common.roofMaterial === 'THATCH_PALM' || common.roofMaterial === 'DILAPIDATED') rawHousing += weights.thatchRoofPoints;
-  else if (common.roofMaterial === 'SHEET_ALUMINIUM') rawHousing += Math.round(weights.thatchRoofPoints * 0.5);
 
-  if (common.wallMaterial === 'CLAY_MUD' || common.wallMaterial === 'PALM_LEAF' || common.wallMaterial === 'DILAPIDATED') rawHousing += weights.mudWallPoints;
-  else if (common.wallMaterial === 'PLANK') rawHousing += Math.round(weights.mudWallPoints * 0.5);
+  const isTemporaryOrNonPermanent =
+    common.housingPermanency === 'TEMPORARY' ||
+    common.unitType === 'SLUM_SHACK' ||
+    common.unitType === 'TEMPORARY_HUT' ||
+    common.unitType === 'LINE_ROOM';
+  const isSemiPermanent = common.housingPermanency === 'SEMI_PERMANENT';
+  const nonPermPts = w.nonPermanentHousePoints ?? 6;
 
-  if (common.floorMaterial === 'CLAY' || common.floorMaterial === 'SAND' || common.floorMaterial === 'DILAPIDATED') rawHousing += weights.sandFloorPoints;
-  if (common.houseArea === 'LESS_THAN_500_SQFT') rawHousing += weights.smallHouseAreaPoints;
-  if (!common.ownsLand || !common.ownsCurrentHouse) rawHousing += weights.noLandPoints;
-  const housingScore = Math.min(weights.housingMax, rawHousing);
+  if (isTemporaryOrNonPermanent) {
+    rawHousing += nonPermPts;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'தற்காலிக / நிரந்தரமற்ற வீடு', labelEn: 'Temporary / Non-permanent House', points: nonPermPts });
+  } else if (isSemiPermanent) {
+    const pts = Math.round(nonPermPts * 0.5);
+    rawHousing += pts;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'அரை நிரந்தர வீடு', labelEn: 'Semi-permanent House', points: pts });
+  }
 
-  // 2. Sanitation & Utilities Score (Max weights.sanitationMax e.g. 20)
+  if (common.roofMaterial === 'THATCH_PALM' || common.roofMaterial === 'DILAPIDATED') {
+    rawHousing += w.thatchRoofPoints;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'ஓலை / சிதைந்த கூரை', labelEn: 'Thatch / Dilapidated Roof', points: w.thatchRoofPoints });
+  } else if (common.roofMaterial === 'SHEET_ALUMINIUM') {
+    const pts = Math.round(w.thatchRoofPoints * 0.5);
+    rawHousing += pts;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'தகரக் கூரை', labelEn: 'Metal Sheet Roof', points: pts });
+  }
+
+  if (common.wallMaterial === 'CLAY_MUD' || common.wallMaterial === 'PALM_LEAF' || common.wallMaterial === 'DILAPIDATED') {
+    rawHousing += w.mudWallPoints;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'மண் / ஓலைச் சுவர்', labelEn: 'Mud / Palm Leaf Wall', points: w.mudWallPoints });
+  } else if (common.wallMaterial === 'PLANK') {
+    const pts = Math.round(w.mudWallPoints * 0.5);
+    rawHousing += pts;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'பலகைச் சுவர்', labelEn: 'Plank Wall', points: pts });
+  }
+
+  if (common.floorMaterial === 'CLAY' || common.floorMaterial === 'SAND' || common.floorMaterial === 'DILAPIDATED') {
+    rawHousing += w.sandFloorPoints;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'மண் / மணல் தரை', labelEn: 'Clay / Sand Floor', points: w.sandFloorPoints });
+  }
+
+  if (common.houseArea === 'LESS_THAN_500_SQFT') {
+    rawHousing += w.smallHouseAreaPoints;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: '500 சதுர அடிக்கும் குறைவான வீடு', labelEn: 'Floor area < 500 sq.ft', points: w.smallHouseAreaPoints });
+  }
+
+  const noOwnership =
+    common.houseAndLandOwnership === 'NO_OWNERSHIP' ||
+    common.houseAndLandOwnership === 'RENTED_LEASED' ||
+    common.houseAndLandOwnership === 'RELATIVES_HOUSE' ||
+    (!common.ownsLand && !common.ownsCurrentHouse);
+  if (noOwnership) {
+    rawHousing += w.noLandPoints;
+    itemizedFactors.push({ category: 'HOUSING', labelTa: 'சொந்த வீடு / காணி உரிமையின்மை', labelEn: 'No House & Land Ownership', points: w.noLandPoints });
+  }
+
+  const housingScore = Math.min(w.housingMax, Math.max(0, rawHousing));
+
+  // 2. Sanitation, Water & Lighting Score (Max w.sanitationMax e.g. 20)
   let rawSanitation = 0;
-  if (common.toiletLocation === 'OPEN_DEFECATION' || common.toiletNature === 'NO_TOILET') rawSanitation += weights.noToiletPoints;
-  else if (common.toiletLocation === 'SHARED' || common.toiletLocation === 'PUBLIC') rawSanitation += Math.round(weights.noToiletPoints * 0.5);
+  if (common.toiletLocation === 'OPEN_DEFECATION' || common.toiletNature === 'NO_TOILET') {
+    rawSanitation += w.noToiletPoints;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'கழிப்பறை வசதி இல்லை', labelEn: 'No Toilet Facility', points: w.noToiletPoints });
+  } else if (
+    common.toiletLocation === 'SHARED' ||
+    common.toiletLocation === 'PUBLIC' ||
+    common.toiletNature === 'OPEN_PIT_NO_SLAB' ||
+    common.toiletNature === 'DIRECT_PIT_SLAB'
+  ) {
+    const pts = Math.round(w.noToiletPoints * 0.5);
+    rawSanitation += pts;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'பகிர்ந்த / அடிப்படைக் கழிப்பறை', labelEn: 'Shared / Basic Pit Toilet', points: pts });
+  }
 
-  if (common.waterSource === 'UNPROTECTED_WELL' || common.waterSource === 'RIVER_TANK') rawSanitation += weights.unprotectedWaterPoints;
-  if (common.lightingSource === 'KEROSENE' || common.lightingSource === 'GENERATOR_BATTERY') rawSanitation += weights.keroseneLightingPoints;
-  const sanitationScore = Math.min(weights.sanitationMax, rawSanitation);
+  if (common.waterSource === 'UNPROTECTED_WELL' || common.waterSource === 'RIVER_TANK') {
+    rawSanitation += w.unprotectedWaterPoints;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'பாதுகாப்பற்ற குடிநீர் மூலம்', labelEn: 'Unprotected Drinking Water Source', points: w.unprotectedWaterPoints });
+  } else if (common.waterSource === 'COMMUNITY_TAP' || common.waterSource === 'RAINWATER') {
+    const pts = Math.round(w.unprotectedWaterPoints * 0.5);
+    rawSanitation += pts;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'பொதுக் குழாய் / மழைநீர் குடிநீர்', labelEn: 'Community Tap / Rainwater', points: pts });
+  }
 
-  // 3. Demographics & Vulnerability Score (Max weights.demographicsMax e.g. 25)
+  if (common.lightingSource === 'KEROSENE') {
+    rawSanitation += w.keroseneLightingPoints;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'மண்ணெண்ணெய் விளக்கு (மின்சாரம் இல்லை)', labelEn: 'Kerosene Lighting (No Grid Power)', points: w.keroseneLightingPoints });
+  } else if (common.lightingSource === 'GENERATOR_BATTERY') {
+    const pts = Math.round(w.keroseneLightingPoints * 0.5);
+    rawSanitation += pts;
+    itemizedFactors.push({ category: 'SANITATION', labelTa: 'மின்கல / ஜெனரேட்டர் ஒளி', labelEn: 'Battery / Generator Lighting', points: pts });
+  }
+  const sanitationScore = Math.min(w.sanitationMax, Math.max(0, rawSanitation));
+
+  // 3. Demographics & Members-at-a-Glance Score (Max w.demographicsMax e.g. 25)
   let rawDemo = 0;
-  if (common.isSingleParent) rawDemo += weights.singleParentPoints;
-  const hasDisability = members.some((m) => m.isPersonWithDisability || m.chronicIllness === 'DISABILITY_PHYSICAL');
-  if (hasDisability) rawDemo += weights.disabilityMemberPoints;
-  const hasChronic = members.some((m) => m.chronicIllness && m.chronicIllness !== 'NONE' && m.chronicIllness !== 'DISABILITY_PHYSICAL');
-  if (hasChronic) rawDemo += weights.chronicIllnessPoints;
-  const hasElderly = members.some((m) => m.isElderly);
-  if (hasElderly) rawDemo += weights.elderlyMemberPoints;
-  const demographicsScore = Math.min(weights.demographicsMax, rawDemo);
+  if (common.isSingleParent) {
+    rawDemo += w.singleParentPoints;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: 'ஒற்றைப் பெற்றோர் குடும்பம்', labelEn: 'Single Parent Household', points: w.singleParentPoints });
+  }
+  if (glance.ckduCount > 0) {
+    const pts = w.ckduPoints ?? 6;
+    rawDemo += pts;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `சிறுநீரக நோய் (CKDU: ${glance.ckduCount})`, labelEn: `CKDU Patient (${glance.ckduCount})`, points: pts });
+  }
+  if (glance.disabilityCount > 0) {
+    rawDemo += w.disabilityMemberPoints;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `மாற்றுத்திறனாளி (${glance.disabilityCount})`, labelEn: `Person with Disability (${glance.disabilityCount})`, points: w.disabilityMemberPoints });
+  }
+  if (glance.chronicDiseaseCount > 0) {
+    rawDemo += w.chronicIllnessPoints;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `நாள்பட்ட நோயாளர் (${glance.chronicDiseaseCount})`, labelEn: `Chronic Disease (${glance.chronicDiseaseCount})`, points: w.chronicIllnessPoints });
+  }
+  if (glance.over70Count > 0) {
+    rawDemo += w.elderlyMemberPoints;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `70 வயதுக்கு மேற்பட்டோர் (${glance.over70Count})`, labelEn: `Over 70 Years (${glance.over70Count})`, points: w.elderlyMemberPoints });
+  }
+  if (glance.childrenNotInSchool5To16Count > 0) {
+    const pts = w.childrenNotInSchoolPoints ?? 5;
+    rawDemo += pts;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `பாடசாலை செல்லாத பிள்ளைகள் 5–16 (${glance.childrenNotInSchool5To16Count})`, labelEn: `Children 5–16 Not in School (${glance.childrenNotInSchool5To16Count})`, points: pts });
+  }
+  if (glance.belowOLCount > 0) {
+    const pts = w.belowOLPoints ?? 3;
+    rawDemo += pts;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `O/L கீழ் கல்வி நிலை (${glance.belowOLCount})`, labelEn: `Below O/L Education (${glance.belowOLCount})`, points: pts });
+  }
+  const dependencyRatio = glance.totalMembers > 0 ? glance.dependentsCount / glance.totalMembers : 0;
+  if (glance.dependentsCount >= 3 || dependencyRatio >= 0.5) {
+    const pts = w.dependentsPoints ?? 4;
+    rawDemo += pts;
+    itemizedFactors.push({ category: 'DEMOGRAPHICS', labelTa: `அதிக தங்கி வாழ்வோர் (${glance.dependentsCount}/${glance.totalMembers})`, labelEn: `High Dependents (${glance.dependentsCount}/${glance.totalMembers})`, points: pts });
+  }
+  const demographicsScore = Math.min(w.demographicsMax, Math.max(0, rawDemo));
 
-  // 4. Economic Profile Score (Max weights.economicMax e.g. 30)
+  // 4. Economic Level & Assets Score (Max w.economicMax e.g. 30)
   let rawEcon = 0;
   const totalIncome = common.income.total || (
-    common.income.unstableSources + common.income.salary + common.income.agriculture + common.income.samurdhi
+    common.income.unstableSources + common.income.salary + common.income.business + common.income.agriculture + common.income.samurdhi + common.income.pension
   );
-  if (totalIncome <= 15000) rawEcon += weights.lowIncomePoints;
-  else if (totalIncome <= 25000) rawEcon += Math.round(weights.lowIncomePoints * 0.6);
+  const totalExpenses = common.expenses.total || (
+    common.expenses.food + common.expenses.water + common.expenses.clothing + common.expenses.medical + common.expenses.rent + common.expenses.transport + common.expenses.electricity + common.expenses.education
+  );
 
-  if (common.vehicleType === 'NONE') rawEcon += weights.noVehiclePoints;
-  if (common.income.unstableSources > 0 || common.machineryType === 'NONE') rawEcon += weights.dailyWageLaborPoints;
-  const economicScore = Math.min(weights.economicMax, rawEcon);
+  if (totalIncome <= 15000) {
+    rawEcon += w.lowIncomePoints;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: `மிகக் குறைந்த மாத வருமானம் (Rs. ${totalIncome.toLocaleString()})`, labelEn: `Very Low Monthly Income (Rs. ${totalIncome.toLocaleString()})`, points: w.lowIncomePoints });
+  } else if (totalIncome <= 30000) {
+    const pts = Math.round(w.lowIncomePoints * 0.6);
+    rawEcon += pts;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: `குறைந்த மாத வருமானம் (Rs. ${totalIncome.toLocaleString()})`, labelEn: `Low Monthly Income (Rs. ${totalIncome.toLocaleString()})`, points: pts });
+  }
 
+  if (totalExpenses > totalIncome && totalIncome > 0) {
+    const pts = w.expenditureDeficitPoints ?? 4;
+    rawEcon += pts;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'வருமானத்தை விட மாதச் செலவு அதிகம்', labelEn: 'Monthly Expenditure Exceeds Income', points: pts });
+  }
+
+  const kwh = Number(common.electricityUnitsKwh || 0);
+  if (kwh <= 30) {
+    const pts = w.lowElectricityUnitsPoints ?? 4;
+    rawEcon += pts;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: `குறைந்த மின்சாரப் பயன்பாடு (${kwh} அலகுகள்/மாதம்)`, labelEn: `Low Electricity Usage (${kwh} units/month)`, points: pts });
+  }
+
+  if (common.vehicleType === 'NONE' || common.vehicleType === 'BICYCLE') {
+    rawEcon += w.noVehiclePoints;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'மோட்டார் வாகனம் இல்லை', labelEn: 'No Motor Vehicle Owned', points: w.noVehiclePoints });
+  }
+
+  if (common.income.unstableSources > 0 || common.machineryType === 'NONE') {
+    rawEcon += w.dailyWageLaborPoints;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'நிலையற்ற வருமானம் / இயந்திரம் இல்லை', labelEn: 'Unstable Income / No Machinery', points: w.dailyWageLaborPoints });
+  }
+
+  const hasProductiveLandOrAssets = Boolean(
+    common.ownsOtherHouse ||
+    common.hasHighland ||
+    common.hasPaddyLand ||
+    common.ownsOtherLand ||
+    (common.livestockCount && common.livestockCount >= 5)
+  );
+  if (!hasProductiveLandOrAssets) {
+    const pts = w.noProductiveAssetsPoints ?? 5;
+    rawEcon += pts;
+    itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'மேட்டு நிலம் / வயல் / மாற்று வீடு / கால்நடை சொத்து இல்லை', labelEn: 'No Highland / Paddy / Other House / Livestock Assets', points: pts });
+  } else {
+    // Asset wealth offsets (owning high-value assets lowers poverty score)
+    if (common.ownsOtherHouse) {
+      rawEcon -= 6;
+      itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'மாற்று வீடு / கட்டிடம் உள்ளது (கழிவு)', labelEn: 'Owns Other House / Building (Offset)', points: -6 });
+    }
+    if (common.vehicleType === 'CAR' || common.vehicleType === 'VAN_JEEP' || common.vehicleType === 'BUS' || common.vehicleType === 'LORRY') {
+      rawEcon -= 8;
+      itemizedFactors.push({ category: 'ECONOMIC', labelTa: 'பெரிய / தனிப்பட்ட வாகனம் உள்ளது (கழிவு)', labelEn: 'Owns Car / Van / Commercial Vehicle (Offset)', points: -8 });
+    }
+  }
+
+  const economicScore = Math.min(w.economicMax, Math.max(0, rawEcon));
   const totalScore = Math.min(100, Math.max(0, housingScore + sanitationScore + demographicsScore + economicScore));
 
   let priorityRank: 1 | 2 | 3 | 4 = 4;
@@ -848,6 +1172,7 @@ export const calculateFamilyPovertyScore = (
       sanitationScore,
       demographicsScore,
       economicScore,
+      itemizedFactors,
     },
   };
 };

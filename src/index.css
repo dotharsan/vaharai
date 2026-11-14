@@ -124,9 +124,35 @@
     box-shadow: none !important;
   }
 
+  /* When printing Official Family A4 Summary */
+  body:has(#printable-family-summary-a4) * {
+    visibility: hidden;
+  }
+  body:has(#printable-family-summary-a4) #printable-family-summary-a4,
+  body:has(#printable-family-summary-a4) #printable-family-summary-a4 * {
+    visibility: visible;
+  }
+  #printable-family-summary-a4 {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 210mm;
+    margin: 0;
+    padding: 8mm 10mm;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
   /* General print when no specialized modal is active: main content prints cleanly! */
-  body:not(:has(#thermal-slip)):not(:has(#printable-id-card)):not(:has(#printable-report-area)):not(:has(#ai-report-paper)):not(:has(#printable-petition-receipt)) main,
-  body:not(:has(#thermal-slip)):not(:has(#printable-id-card)):not(:has(#printable-report-area)):not(:has(#ai-report-paper)):not(:has(#printable-petition-receipt)) main * {
+  body:not(:has(#thermal-slip)):not(:has(#printable-id-card)):not(:has(#printable-report-area)):not(:has(#ai-report-paper)):not(:has(#printable-petition-receipt)):not(:has(#printable-family-summary-a4)) main,
+  body:not(:has(#thermal-slip)):not(:has(#printable-id-card)):not(:has(#printable-report-area)):not(:has(#ai-report-paper)):not(:has(#printable-petition-receipt)):not(:has(#printable-family-summary-a4)) main * {
     visibility: visible !important;
   }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 8mm;
 }

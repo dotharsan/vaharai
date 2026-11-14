@@ -16,35 +16,25 @@ import {
   Users,
   Search,
   Plus,
-  ShieldCheck,
-  AlertTriangle,
-  Award,
-  ChevronRight,
-  Printer,
-  Building,
-  Home,
-  Droplets,
-  Zap,
-  DollarSign,
-  Heart,
   Settings,
-  RefreshCw,
-  QrCode,
-  FileSpreadsheet,
-  CheckCircle2,
   Phone,
-  CreditCard,
-  History,
   Trash2,
   Edit,
+  Home,
+  Droplets,
+  FileText,
+  UserPlus,
 } from 'lucide-react';
 import {
-  generateProvisionalNic,
   clearAllHouseholdsPermanently,
   recordDeletedId,
   saveHouseholds,
 } from '../services/storage';
-import { generateQrDataUrl } from '../utils/barcode';
+import {
+  OfficialFamilyDossierWindow,
+  DossierWindowTab,
+} from './OfficialFamilyDossierWindow';
+import { computeMembersAtAGlance } from '../types';
 
 interface FamilyDataCenterViewProps {
   households: HouseholdData[];
@@ -88,139 +78,14 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
   const [pageSize, setPageSize] = useState<number | 'ALL'>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // Modals
-  const [viewingHousehold, setViewingHousehold] = useState<HouseholdData | null>(null);
-  const [familyQrDataUrl, setFamilyQrDataUrl] = useState<string>('');
-  const [activeDossierTab, setActiveDossierTab] = useState<'profile' | 'household_data' | 'score_breakdown' | 'aid_history'>('profile');
-
-  // Add Family Wizard Modal
-  const [isWizardOpen, setIsWizardOpen] = useState(false);
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  // Dedicated Full-Window Official Family Entry & A4 Summary Workspace
+  const [dossierWindowOpen, setDossierWindowOpen] = useState(false);
+  const [dossierInitialTab, setDossierInitialTab] = useState<DossierWindowTab>('family-entry');
+  const [dossierEditingHousehold, setDossierEditingHousehold] = useState<HouseholdData | null>(null);
 
   // Super Admin Scoring Formula Configuration Modal (Requirement 08)
   const [isConfigWeightsOpen, setIsConfigWeightsOpen] = useState(false);
   const [tempWeights, setTempWeights] = useState<PovertyScoringWeights>(povertyWeights);
-
-  // Wizard State
-  const [newHouseholdMeta, setNewHouseholdMeta] = useState<{
-    familyCode: string;
-    householdReference: string;
-    applicationReference: string;
-    applicantNameTa: string;
-    applicantNameEn: string;
-    applicantNic: string;
-    phone: string;
-    address: string;
-    divisionCode: string;
-    status: 'DS_ENDORSED' | 'COMMITTEE_APPROVED' | 'ACTIVE';
-    selectedCategory: 'VULNERABLE' | 'EXTREME_POOR' | 'POOR' | 'TRANSITIONAL' | 'NON_VULNERABLE';
-    bankName: string;
-    bankBranch: string;
-    bankAccountNo: string;
-  }>({
-    familyCode: '',
-    householdReference: 'HH-5-1-03-01-010-00101',
-    applicationReference: `2026${Math.floor(Math.random() * 9000000 + 1000000)}`,
-    applicantNameTa: '',
-    applicantNameEn: '',
-    applicantNic: '',
-    phone: '',
-    address: '',
-    divisionCode: '211',
-    status: 'DS_ENDORSED',
-    selectedCategory: 'VULNERABLE',
-    bankName: 'Peoples Bank',
-    bankBranch: 'Valaichchenai',
-    bankAccountNo: '',
-  });
-
-  const [newCommonAssets, setNewCommonAssets] = useState<HouseholdCommonAssets>({
-    ownsLand: false,
-    landExtent: 'NONE',
-    ownsOtherLand: false,
-    otherLandExtent: 'NONE',
-    vehicleType: 'NONE',
-    machineryType: 'NONE',
-    livestockType: 'NONE',
-    livestockCount: 0,
-    expenses: {
-      food: 15000,
-      water: 500,
-      clothing: 1500,
-      medical: 2000,
-      rent: 0,
-      transport: 1000,
-      electricity: 800,
-      fuelGas: 1500,
-      telecom: 800,
-      education: 1000,
-      religiousLeisure: 500,
-      loansDebt: 2000,
-      total: 26600,
-    },
-    income: {
-      unstableSources: 10000,
-      salary: 0,
-      business: 0,
-      agriculture: 3000,
-      rent: 0,
-      pension: 0,
-      samurdhi: 2500,
-      elderlyAid: 0,
-      disabilityAid: 0,
-      ckdAid: 0,
-      foreignRemittance: 0,
-      localRemittance: 0,
-      otherGovAid: 0,
-      other: 0,
-      total: 15500,
-    },
-    electricityUnitsKwh: 25,
-    unitType: 'SINGLE_1_STORY',
-    floorMaterial: 'CLAY',
-    roofMaterial: 'THATCH_PALM',
-    wallMaterial: 'CLAY_MUD',
-    houseArea: 'LESS_THAN_500_SQFT',
-    ownsCurrentHouse: false,
-    ownsOtherHouse: false,
-    lightingSource: 'KEROSENE',
-    waterSource: 'UNPROTECTED_WELL',
-    toiletLocation: 'OPEN_DEFECATION',
-    toiletNature: 'NO_TOILET',
-    isSingleParent: false,
-  });
-
-  const [newMembersList, setNewMembersList] = useState<Array<{
-    nameTa: string;
-    nameEn: string;
-    nic: string;
-    rel: FamilyRelationship;
-    gender: 'MALE' | 'FEMALE';
-    dob: string;
-    phone: string;
-    isDisability: boolean;
-    isElderly: boolean;
-    isPregnant: boolean;
-    chronicIllness: string;
-    economicActivity: string;
-    educationLevel: string;
-  }>>([
-    {
-      nameTa: '',
-      nameEn: '',
-      nic: '',
-      rel: 'HEAD',
-      gender: 'MALE',
-      dob: '1985-01-01',
-      phone: '',
-      isDisability: false,
-      isElderly: false,
-      isPregnant: false,
-      chronicIllness: 'NONE',
-      economicActivity: 'கூலி வேலை (Daily Wage Labor)',
-      educationLevel: 'தரம் 8 (Grade 8)',
-    },
-  ]);
 
   // Filtered dataset
   const filteredHouseholds = useMemo(() => {
@@ -263,16 +128,14 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
     return { total, p1Count, p2Count, p3Count, p4Count };
   }, [households]);
 
-  // Open Family Dossier (Matching Image 1 / image_0a3d5e1b.png)
-  const handleOpenDossier = async (h: HouseholdData) => {
-    setViewingHousehold(h);
-    setActiveDossierTab('profile');
-    try {
-      const url = await generateQrDataUrl(h.familyQrPayload);
-      setFamilyQrDataUrl(url);
-    } catch {
-      setFamilyQrDataUrl('');
-    }
+  // Open Official Dossier Window (New Family, Edit, Add Members under Head QR, or A4 Summary)
+  const handleOpenOfficialWindow = (
+    household: HouseholdData | null,
+    tab: DossierWindowTab = 'family-entry'
+  ) => {
+    setDossierEditingHousehold(household);
+    setDossierInitialTab(tab);
+    setDossierWindowOpen(true);
   };
 
   // Super Admin: Permanently wipe all family records
@@ -300,7 +163,7 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
 
     clearAllHouseholdsPermanently();
     onUpdateHouseholds([]);
-    if (viewingHousehold) setViewingHousehold(null);
+    setDossierWindowOpen(false);
     onAuditLog('CLEAR_ALL_HOUSEHOLDS', `Super Admin ${currentUser.name} wiped all family records.`);
     alert(lang === 'ta' ? 'அனைத்து குடும்ப விபரங்களும் வெற்றிகரமாக அழிக்கப்பட்டன.' : 'All family records have been wiped.');
   };
@@ -322,152 +185,52 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
     const updated = households.filter((item) => item.id !== h.id);
     saveHouseholds(updated);
     onUpdateHouseholds(updated);
-    if (viewingHousehold?.id === h.id) setViewingHousehold(null);
+    if (dossierEditingHousehold?.id === h.id) setDossierWindowOpen(false);
     onAuditLog('DELETE_HOUSEHOLD', `Deleted household ${h.familyCode} (ID: ${h.id})`);
   };
 
-  // Add member row in wizard
-  const handleAddMemberRow = () => {
-    setNewMembersList([
-      ...newMembersList,
-      {
-        nameTa: '',
-        nameEn: '',
-        nic: '',
-        rel: 'SON',
-        gender: 'MALE',
-        dob: '2010-01-01',
-        phone: '',
-        isDisability: false,
-        isElderly: false,
-        isPregnant: false,
-        chronicIllness: 'NONE',
-        economicActivity: 'மாணவர் (Student)',
-        educationLevel: 'தரம் 10 (Grade 10)',
-      },
-    ]);
-  };
-
-  // Remove member row
-  const handleRemoveMemberRow = (idx: number) => {
-    if (newMembersList.length <= 1) return;
-    setNewMembersList(newMembersList.filter((_, i) => i !== idx));
-  };
-
-  // Wizard Open
-  const handleOpenAddFamilyWizard = () => {
-    const targetDiv = '211';
-    setNewHouseholdMeta({
-      familyCode: '',
-      householdReference: `HH-5-1-03-01-010-${String(households.length + 1).padStart(5, '0')}`,
-      applicationReference: `2026${Math.floor(Math.random() * 9000000 + 1000000)}`,
-      applicantNameTa: '',
-      applicantNameEn: '',
-      applicantNic: '',
-      phone: '',
-      address: '',
-      divisionCode: targetDiv,
-      status: 'DS_ENDORSED',
-      selectedCategory: 'VULNERABLE',
-      bankName: 'Peoples Bank',
-      bankBranch: 'Valaichchenai',
-      bankAccountNo: '',
-    });
-    setWizardStep(1);
-    setIsWizardOpen(true);
-  };
-
-  // Commit New Family
-  const handleCommitFamilyWizard = () => {
-    if (!newHouseholdMeta.applicantNic || !newHouseholdMeta.applicantNameTa) {
-      alert(lang === 'ta' ? 'தயவுசெய்து குடும்பத் தலைவரின் NIC மற்றும் பெயரை உள்ளிடவும்.' : 'Please enter Applicant NIC and Name.');
-      return;
+  // Save handler from OfficialFamilyDossierWindow
+  const handleSaveOfficialFamily = ({
+    household,
+    savedMembers,
+    removedMemberIds,
+    isEdit,
+  }: {
+    household: HouseholdData;
+    savedMembers: Beneficiary[];
+    removedMemberIds: string[];
+    isEdit: boolean;
+  }) => {
+    // 1. Merge Households
+    const existingIdx = households.findIndex(
+      (h) => h.id === household.id || h.familyCode === household.familyCode
+    );
+    let nextHouseholds: HouseholdData[];
+    if (existingIdx >= 0) {
+      nextHouseholds = [...households];
+      nextHouseholds[existingIdx] = household;
+    } else {
+      nextHouseholds = [household, ...households];
     }
+    onUpdateHouseholds(nextHouseholds);
 
-    const familyCode = newHouseholdMeta.familyCode.trim();
-    const divisionCode = newHouseholdMeta.divisionCode;
-    const familyQrPayload = familyCode;
+    // 2. Merge Beneficiaries (update existing, prepend new, remove deleted member drafts)
+    const savedMap = new Map(savedMembers.map((m) => [m.id, m]));
+    const removedSet = new Set(removedMemberIds);
+    const updatedExisting = beneficiaries
+      .filter((b) => !removedSet.has(b.id))
+      .map((b) => savedMap.get(b.id) || b);
+    const existingIds = new Set(updatedExisting.map((b) => b.id));
+    const newlyAdded = savedMembers.filter((m) => !existingIds.has(m.id));
+    onUpdateBeneficiaries([...newlyAdded, ...updatedExisting]);
 
-    // Build temporary beneficiaries for the members to calculate 100-point score
-    const createdBeneficiaries: Beneficiary[] = newMembersList.map((m, idx) => {
-      let memberNic = m.nic.trim();
-      let isProvisional = false;
-      if (!memberNic) {
-        memberNic = generateProvisionalNic(divisionCode);
-        isProvisional = true;
-      }
-      return {
-        id: `VHR-${divisionCode}-2026-${String(beneficiaries.length + idx + 1).padStart(4, '0')}`,
-        nic: memberNic,
-        isProvisionalNic: isProvisional,
-        nameTa: m.nameTa.trim() || newHouseholdMeta.applicantNameTa,
-        nameEn: m.nameEn.trim() || newHouseholdMeta.applicantNameEn || m.nameTa.trim(),
-        gender: m.gender,
-        dob: m.dob,
-        phone: m.phone.trim() || newHouseholdMeta.phone,
-        address: newHouseholdMeta.address || `வாகரை (${divisionCode})`,
-        divisionCode,
-        familyHead: idx === 0,
-        householdNo: newHouseholdMeta.householdReference,
-        familyCode,
-        familyRelationship: m.rel,
-        welfareScheme: 'ASWESUMA_EXTREME',
-        welfareStatus: 'ACTIVE',
-        chronicIllness: (m.chronicIllness as any) || 'NONE',
-        isPersonWithDisability: m.isDisability,
-        isElderly: m.isElderly,
-        isPregnantMother: m.isPregnant,
-        barcode: memberNic,
-        qrPayload: `ID:VHR-${divisionCode}|NIC:${memberNic}|FAM:${familyCode}|REL:${m.rel}`,
-        familyQrPayload,
-        notes: `குடும்ப உறுப்பினர் (${m.rel}) - ${m.economicActivity}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-    });
-
-    // Calculate 100-point score
-    const scoreResult = calculateFamilyPovertyScore(newCommonAssets, createdBeneficiaries, povertyWeights);
-
-    const newHousehold: HouseholdData = {
-      id: newHouseholdMeta.householdReference,
-      familyCode,
-      householdReference: newHouseholdMeta.householdReference,
-      applicationReference: newHouseholdMeta.applicationReference,
-      applicantNameTa: newHouseholdMeta.applicantNameTa.trim(),
-      applicantNameEn: newHouseholdMeta.applicantNameEn.trim() || newHouseholdMeta.applicantNameTa.trim(),
-      applicantNic: newHouseholdMeta.applicantNic.trim(),
-      phone: newHouseholdMeta.phone.trim(),
-      address: newHouseholdMeta.address.trim(),
-      divisionCode,
-      status: newHouseholdMeta.status,
-      selectedCategory: newHouseholdMeta.selectedCategory,
-      bankDetails: {
-        bankName: newHouseholdMeta.bankName,
-        branch: newHouseholdMeta.bankBranch,
-        accountNumber: newHouseholdMeta.bankAccountNo,
-        accountName: `${newHouseholdMeta.applicantNameEn || newHouseholdMeta.applicantNameTa} ${newHouseholdMeta.applicantNic}`,
-        status: 'VERIFIED',
-      },
-      commonAssets: newCommonAssets,
-      totalMembersCount: createdBeneficiaries.length,
-      familyQrPayload,
-      score100: scoreResult.score100,
-      priorityRank: scoreResult.priorityRank,
-      scoreBreakdown: scoreResult.breakdown,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Save household & citizens
-    onUpdateHouseholds([newHousehold, ...households]);
-    onUpdateBeneficiaries([...createdBeneficiaries, ...beneficiaries]);
     onAuditLog(
-      'REGISTER_FAMILY_UNIT',
-      `Registered new family ${familyCode} with ${createdBeneficiaries.length} members. 100-Point Score: ${scoreResult.score100} (Priority ${scoreResult.priorityRank})`
+      isEdit ? 'UPDATE_FAMILY_UNIT' : 'REGISTER_FAMILY_UNIT',
+      `${isEdit ? 'Updated' : 'Registered'} family ${household.familyCode} (${savedMembers.length} members under Head QR). Score: ${household.score100}/100 (Priority ${household.priorityRank})`
     );
 
-    setIsWizardOpen(false);
+    setDossierWindowOpen(false);
+    setDossierEditingHousehold(null);
   };
 
   // Save Super Admin Scoring Weights
@@ -531,11 +294,12 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
 
           {canEdit && (
             <button
-              onClick={handleOpenAddFamilyWizard}
-              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow-xs"
+              type="button"
+              onClick={() => handleOpenOfficialWindow(null, 'family-entry')}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              <span>{t.addNewFamily}</span>
+              <span>{lang === 'ta' ? 'குடும்ப விபரத்தை உள்ளடக்கு' : 'Enter Official Family Details'}</span>
             </button>
           )}
         </div>
@@ -734,26 +498,47 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
                       )}
                     </div>
 
-                    {/* Living Conditions Tags */}
-                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
-                      <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
-                        <Home className="w-3 h-3 text-slate-500" />
-                        <span>கூரை: {h.commonAssets.roofMaterial === 'THATCH_PALM' ? 'ஓலை/வைக்கோல்' : h.commonAssets.roofMaterial}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
-                        <Droplets className="w-3 h-3 text-blue-500" />
-                        <span>நீர்: {h.commonAssets.waterSource === 'UNPROTECTED_WELL' ? 'பாதுகாப்பற்ற கிணறு' : h.commonAssets.waterSource}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
-                        <span>உறுப்பினர்கள்: <b>{members.length || h.totalMembersCount} பேர்</b></span>
-                      </span>
-                    </div>
+                    {/* Living Conditions & Members-at-a-Glance Summary Tags */}
+                    {(() => {
+                      const g = computeMembersAtAGlance(members);
+                      return (
+                        <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-slate-600">
+                          <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded font-semibold">
+                            <Users className="w-3 h-3 text-emerald-700" />
+                            <span>உறுப்பினர்கள்: <b>{members.length || h.totalMembersCount}</b></span>
+                          </span>
+                          {g.ckduCount > 0 && (
+                            <span className="bg-purple-100 text-purple-900 px-2 py-0.5 rounded font-bold">CKDU: {g.ckduCount}</span>
+                          )}
+                          {g.disabilityCount > 0 && (
+                            <span className="bg-blue-100 text-blue-900 px-2 py-0.5 rounded font-bold">மாற்றுத்திறனாளி: {g.disabilityCount}</span>
+                          )}
+                          {g.over70Count > 0 && (
+                            <span className="bg-teal-100 text-teal-900 px-2 py-0.5 rounded font-bold">70+: {g.over70Count}</span>
+                          )}
+                          {g.childrenNotInSchool5To16Count > 0 && (
+                            <span className="bg-rose-100 text-rose-900 px-2 py-0.5 rounded font-bold">பள்ளி செல்லாதோர் (5–16): {g.childrenNotInSchool5To16Count}</span>
+                          )}
+                          <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
+                            <Home className="w-3 h-3 text-slate-500" />
+                            <span>{h.commonAssets.houseArea === 'LESS_THAN_500_SQFT' ? '<500 sq.ft' : h.commonAssets.houseArea}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded">
+                            <Droplets className="w-3 h-3 text-blue-500" />
+                            <span>{h.commonAssets.waterSource === 'UNPROTECTED_WELL' ? 'பாதுகாப்பற்ற கிணறு' : h.commonAssets.waterSource}</span>
+                          </span>
+                          <span className="bg-emerald-50 text-emerald-900 px-2 py-0.5 rounded font-mono font-bold">
+                            வருமானம்: Rs.{(h.commonAssets.income?.total || 0).toLocaleString()} | {h.commonAssets.electricityUnitsKwh || 0} kWh
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Right: 100-Point Score & Actions */}
-                  <div className="flex items-center gap-4 shrink-0">
+                  <div className="flex items-center gap-2.5 shrink-0 flex-wrap justify-end">
                     {/* Score Gauge */}
-                    <div className="text-right">
+                    <div className="text-right mr-1">
                       <div className="flex items-baseline justify-end gap-1">
                         <span className="text-2xl font-black text-slate-900 font-mono">
                           {h.score100}
@@ -781,11 +566,44 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
                       </div>
                     </div>
 
+                    <button
+                      type="button"
+                      onClick={() => handleOpenOfficialWindow(h, 'summary-a4')}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-colors"
+                      title={lang === 'ta' ? 'முழுமையான சமரி & A4 அச்சிடு' : 'Official A4 Summary & Print'}
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>{lang === 'ta' ? 'சமரி / A4' : 'Summary A4'}</span>
+                    </button>
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenOfficialWindow(h, 'members')}
+                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-colors"
+                        title={lang === 'ta' ? 'தலைமை QR கீழ் பல குடும்ப உறுப்பினர்களை சேர்' : 'Add members under Head QR'}
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>{lang === 'ta' ? 'உறுப்பினர் (QR)' : '+ Members'}</span>
+                      </button>
+                    )}
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenOfficialWindow(h, 'family-entry')}
+                        className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
+                        title={lang === 'ta' ? 'குடும்ப விபரத்தை திருத்து' : 'Edit family details'}
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
                     {canEdit && (
                       <button
                         type="button"
                         onClick={() => handleDeleteHousehold(h)}
-                        className="p-2 text-rose-600 hover:text-rose-800 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-xl transition-colors"
+                        className="p-2 text-rose-600 hover:text-rose-800 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-lg transition-colors"
                         title={lang === 'ta' ? 'இக்குடும்ப விபரத்தை நிரந்தரமாக அழி' : 'Delete household permanently'}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1002,6 +820,60 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
                       className="w-full px-2 py-1 border rounded font-mono font-bold"
                     />
                   </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">CKDU சிறுநீரக நோய்:</label>
+                    <input
+                      type="number"
+                      value={tempWeights.ckduPoints ?? 6}
+                      onChange={(e) => setTempWeights({ ...tempWeights, ckduPoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">பள்ளி செல்லா (5–16):</label>
+                    <input
+                      type="number"
+                      value={tempWeights.childrenNotInSchoolPoints ?? 5}
+                      onChange={(e) => setTempWeights({ ...tempWeights, childrenNotInSchoolPoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">O/L கீழ் கல்வி (Below O/L):</label>
+                    <input
+                      type="number"
+                      value={tempWeights.belowOLPoints ?? 3}
+                      onChange={(e) => setTempWeights({ ...tempWeights, belowOLPoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">அதிக தங்கி வாழ்வோர்:</label>
+                    <input
+                      type="number"
+                      value={tempWeights.dependentsPoints ?? 4}
+                      onChange={(e) => setTempWeights({ ...tempWeights, dependentsPoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">நிரந்தரமற்ற வீடு:</label>
+                    <input
+                      type="number"
+                      value={tempWeights.nonPermanentHousePoints ?? 6}
+                      onChange={(e) => setTempWeights({ ...tempWeights, nonPermanentHousePoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-0.5">குறைந்த மின்சார அலகு:</label>
+                    <input
+                      type="number"
+                      value={tempWeights.lowElectricityUnitsPoints ?? 4}
+                      onChange={(e) => setTempWeights({ ...tempWeights, lowElectricityUnitsPoints: Number(e.target.value) })}
+                      className="w-full px-2 py-1 border rounded font-mono font-bold"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1034,472 +906,23 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
         </div>
       )}
 
-      {/* Add Family Wizard Modal (Requirement 02, 08) */}
-      {isWizardOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 my-8 space-y-4 max-h-[92vh] overflow-y-auto text-xs">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 bg-indigo-100 text-indigo-800 rounded-lg text-lg">👨‍👩‍👧‍👦</span>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {t.addNewFamily}
-                  </h3>
-                  <div className="text-[11px] text-slate-500">
-                    படிமுறை {wizardStep} / 3: {wizardStep === 1 ? 'குடும்பத்திற்கு பொதுவான தரவுகள்' : wizardStep === 2 ? 'தனி நபருக்குரிய தரவுகள்' : '100 புள்ளிகள் கணக்கீடு & உறுதிப்படுத்தல்'}
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsWizardOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Step Navigation Indicator */}
-            <div className="flex items-center gap-2 text-xs font-bold pb-2 border-b border-slate-100">
-              <button
-                type="button"
-                onClick={() => setWizardStep(1)}
-                className={`px-3 py-1 rounded-lg ${wizardStep === 1 ? 'bg-indigo-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-              >
-                1. பொதுவான தரவுகள்
-              </button>
-              <button
-                type="button"
-                onClick={() => setWizardStep(2)}
-                className={`px-3 py-1 rounded-lg ${wizardStep === 2 ? 'bg-indigo-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-              >
-                2. உறுப்பினர்கள் ({newMembersList.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setWizardStep(3)}
-                className={`px-3 py-1 rounded-lg ${wizardStep === 3 ? 'bg-indigo-800 text-white' : 'bg-slate-100 text-slate-600'}`}
-              >
-                3. புள்ளிகள் & முடிவு
-              </button>
-            </div>
-
-            {/* STEP 1: Household Common Data (Sections 02 to 13) */}
-            {wizardStep === 1 && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">குடும்ப QR அலகுக் குறியீடு (Family QR Code)</label>
-                    <input
-                      type="text"
-                      value={newHouseholdMeta.familyCode}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, familyCode: e.target.value })}
-                      placeholder="CSV-இல் உள்ள குடும்ப QR இலக்கம்"
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">{t.division} *</label>
-                    <select
-                      value={newHouseholdMeta.divisionCode}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, divisionCode: e.target.value })}
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg bg-white"
-                    >
-                      {divisions.map((d) => (
-                        <option key={d.code} value={d.code}>
-                          {d.code} - {d.nameTa}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">{t.headNameTa} *</label>
-                    <input
-                      type="text"
-                      required
-                      value={newHouseholdMeta.applicantNameTa}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, applicantNameTa: e.target.value })}
-                      placeholder="e.g. சின்னப்பு விஜயகுமார்"
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">தலைவர் NIC *</label>
-                    <input
-                      type="text"
-                      required
-                      value={newHouseholdMeta.applicantNic}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, applicantNic: e.target.value })}
-                      placeholder="e.g. 891902697V"
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">{t.phone}</label>
-                    <input
-                      type="text"
-                      value={newHouseholdMeta.phone}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, phone: e.target.value })}
-                      placeholder="e.g. 0760539158"
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">{t.address}</label>
-                    <input
-                      type="text"
-                      value={newHouseholdMeta.address}
-                      onChange={(e) => setNewHouseholdMeta({ ...newHouseholdMeta, address: e.target.value })}
-                      placeholder="e.g. SELVAPURAM KAYANKERNI"
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg"
-                    />
-                  </div>
-                </div>
-
-                {/* Section 13: Single Parent Checkbox */}
-                <div className="p-3 bg-pink-50 border border-pink-200 rounded-xl flex items-center justify-between">
-                  <span className="font-bold text-pink-900">{t.isSingleParentQuestion}</span>
-                  <input
-                    type="checkbox"
-                    checked={newCommonAssets.isSingleParent}
-                    onChange={(e) => setNewCommonAssets({ ...newCommonAssets, isSingleParent: e.target.checked })}
-                    className="w-4 h-4 rounded text-pink-600 cursor-pointer"
-                  />
-                </div>
-
-                {/* Housing Materials (Sections 07 to 12) */}
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                  <span className="font-bold text-slate-800 block">வீடமைப்பு மற்றும் சுகாதார நிலை (Living Conditions)</span>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">கூரை (Roof)</label>
-                      <select
-                        value={newCommonAssets.roofMaterial}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, roofMaterial: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="THATCH_PALM">தென்னை ஓலை / வைக்கோல்</option>
-                        <option value="SHEET_ALUMINIUM">அலுமினியம் / தகடு</option>
-                        <option value="TILES">ஓடுகள்</option>
-                        <option value="CONCRETE">கான்கிரீட்</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">சுவர்கள் (Walls)</label>
-                      <select
-                        value={newCommonAssets.wallMaterial}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, wallMaterial: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="CLAY_MUD">களிமண் / மண் சுவர்</option>
-                        <option value="PALM_LEAF">தென்னை ஓலை</option>
-                        <option value="PLANK">பலகை</option>
-                        <option value="BRICK">செங்கல்</option>
-                        <option value="CEMENT_BLOCK">சிமென்ட் கல்</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">தரை (Floor)</label>
-                      <select
-                        value={newCommonAssets.floorMaterial}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, floorMaterial: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="CLAY">களிமண் தரை</option>
-                        <option value="SAND">மணல் தரை</option>
-                        <option value="CEMENT">சிமெந்து</option>
-                        <option value="TILES">டைல்ஸ்</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">குடிநீர் (Water Source)</label>
-                      <select
-                        value={newCommonAssets.waterSource}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, waterSource: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="UNPROTECTED_WELL">பாதுகாப்பற்ற கிணறு</option>
-                        <option value="PROTECTED_WELL">பாதுகாக்கப்பட்ட கிணறு</option>
-                        <option value="NWSDB_TAP">குழாய் நீர் (சபை)</option>
-                        <option value="RIVER_TANK">குளம் / ஆறு</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">கழிப்பறை (Toilet)</label>
-                      <select
-                        value={newCommonAssets.toiletLocation}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, toiletLocation: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="OPEN_DEFECATION">திறந்தவெளி (கழிப்பறையற்றது)</option>
-                        <option value="SHARED">மற்ற குடும்பத்துடன் பகிர்வு</option>
-                        <option value="INDOOR_EXCLUSIVE">வீட்டுக்குள் தனி கழிப்பறை</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-0.5">மின்சாரம் (Lighting)</label>
-                      <select
-                        value={newCommonAssets.lightingSource}
-                        onChange={(e) => setNewCommonAssets({ ...newCommonAssets, lightingSource: e.target.value as any })}
-                        className="w-full px-2 py-1 border rounded bg-white text-xs"
-                      >
-                        <option value="KEROSENE">மண்ணெண்ணெய் விளக்கு</option>
-                        <option value="GRID_ELECTRICITY">தேசிய மின் கட்டமைப்பு</option>
-                        <option value="SOLAR">சூரிய சக்தி</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep(2)}
-                    className="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg font-bold"
-                  >
-                    அடுத்த படிமுறை: உறுப்பினர்கள் பதிவு →
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2: Individual Members Profile (Form Part 2) */}
-            {wizardStep === 2 && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b">
-                  <span className="font-bold text-slate-800">
-                    குடும்ப உறுப்பினர்கள் விபரம் (அனைவரும் ஒரே குடும்ப QR இன் கீழ் இணைகின்றனர்)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleAddMemberRow}
-                    className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>உறுப்பினர் சேர்</span>
-                  </button>
-                </div>
-
-                <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-                  {newMembersList.map((m, idx) => (
-                    <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 relative">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-800 text-xs">
-                          உறுப்பினர் {idx + 1}: {idx === 0 ? 'குடும்பத் தலைவர் (Head)' : m.rel}
-                        </span>
-                        {idx > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMemberRow(idx)}
-                            className="text-red-600 hover:text-red-800 text-xs font-bold"
-                          >
-                            நீக்கு ✕
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-0.5">பெயர் (தமிழ்)</label>
-                          <input
-                            type="text"
-                            value={m.nameTa}
-                            onChange={(e) => {
-                              const updated = [...newMembersList];
-                              updated[idx].nameTa = e.target.value;
-                              setNewMembersList(updated);
-                            }}
-                            placeholder="பெயர்"
-                            className="w-full px-2 py-1 border rounded bg-white text-xs font-bold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-0.5">NIC (இல்லை எனில் வெற்றிடம்)</label>
-                          <input
-                            type="text"
-                            value={m.nic}
-                            onChange={(e) => {
-                              const updated = [...newMembersList];
-                              updated[idx].nic = e.target.value;
-                              setNewMembersList(updated);
-                            }}
-                            placeholder="NIC"
-                            className="w-full px-2 py-1 border rounded bg-white text-xs font-mono"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-0.5">உறவு (Relation)</label>
-                          <select
-                            value={m.rel}
-                            onChange={(e) => {
-                              const updated = [...newMembersList];
-                              updated[idx].rel = e.target.value as FamilyRelationship;
-                              setNewMembersList(updated);
-                            }}
-                            className="w-full px-2 py-1 border rounded bg-white text-xs"
-                          >
-                            <option value="HEAD">குடும்பத் தலைவர்</option>
-                            <option value="WIFE">மனைவி</option>
-                            <option value="HUSBAND">கணவன்</option>
-                            <option value="SON">மகன்</option>
-                            <option value="DAUGHTER">மகள்</option>
-                            <option value="MOTHER">தாய்</option>
-                            <option value="FATHER">தந்தை</option>
-                            <option value="GRANDMOTHER">பாட்டி</option>
-                            <option value="GRANDFATHER">தாத்தா</option>
-                            <option value="OTHER">ஏனைய உறவினர்</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-0.5">பிறந்த திகதி</label>
-                          <input
-                            type="date"
-                            value={m.dob}
-                            onChange={(e) => {
-                              const updated = [...newMembersList];
-                              updated[idx].dob = e.target.value;
-                              setNewMembersList(updated);
-                            }}
-                            className="w-full px-2 py-1 border rounded bg-white text-xs font-mono"
-                          />
-                        </div>
-
-                        <div className="sm:col-span-2">
-                          <label className="block text-[10px] font-bold text-slate-600 mb-0.5">பொருளாதார செயல்பாடு (Employment)</label>
-                          <input
-                            type="text"
-                            value={m.economicActivity}
-                            onChange={(e) => {
-                              const updated = [...newMembersList];
-                              updated[idx].economicActivity = e.target.value;
-                              setNewMembersList(updated);
-                            }}
-                            placeholder="e.g. கூலி வேலை / கடற்றொழில் / மாணவர்"
-                            className="w-full px-2 py-1 border rounded bg-white text-xs"
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-3 pt-3 sm:col-span-2">
-                          <label className="flex items-center gap-1 font-bold text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={m.isDisability}
-                              onChange={(e) => {
-                                const updated = [...newMembersList];
-                                updated[idx].isDisability = e.target.checked;
-                                setNewMembersList(updated);
-                              }}
-                              className="rounded text-emerald-600"
-                            />
-                            <span>மாற்றுத்திறனாளி</span>
-                          </label>
-                          <label className="flex items-center gap-1 font-bold text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={m.isElderly}
-                              onChange={(e) => {
-                                const updated = [...newMembersList];
-                                updated[idx].isElderly = e.target.checked;
-                                setNewMembersList(updated);
-                              }}
-                              className="rounded text-emerald-600"
-                            />
-                            <span>முதியோர் (70+)</span>
-                          </label>
-                          <label className="flex items-center gap-1 font-bold text-slate-700 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={m.isPregnant}
-                              onChange={(e) => {
-                                const updated = [...newMembersList];
-                                updated[idx].isPregnant = e.target.checked;
-                                setNewMembersList(updated);
-                              }}
-                              className="rounded text-emerald-600"
-                            />
-                            <span>கர்ப்பிணி</span>
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep(1)}
-                    className="px-4 py-2 border rounded-lg font-bold text-slate-700"
-                  >
-                    ← முந்தையது
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep(3)}
-                    className="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg font-bold"
-                  >
-                    அடுத்த படிமுறை: 100 புள்ளிகள் மதிப்பீடு →
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 3: Real-Time 100-Point Score Calculation & Confirmation */}
-            {wizardStep === 3 && (
-              <div className="space-y-4">
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs uppercase font-bold text-emerald-800">கணிக்கப்பட்ட வறுமைப் புள்ளிகள்</span>
-                      <div className="text-3xl font-black text-emerald-950 font-mono mt-0.5">
-                        {calculateFamilyPovertyScore(newCommonAssets, newMembersList as any, povertyWeights).score100} / 100
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="px-3 py-1 bg-emerald-800 text-white font-extrabold rounded-lg text-xs">
-                        முன்னுரிமை நிலை: {calculateFamilyPovertyScore(newCommonAssets, newMembersList as any, povertyWeights).priorityRank}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-emerald-800">
-                    இக்குடும்பத்தின் கூரை, சுவர், குடிநீர், வருமானம் மற்றும் அங்கத்தவர்களின் இடர்பாடுகள் அடிப்படையில் முன்னுரிமை ஒழுங்குமுறை தீர்மானிக்கப்பட்டுள்ளது.
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep(2)}
-                    className="px-4 py-2 border rounded-lg font-bold text-slate-700"
-                  >
-                    ← முந்தையது
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCommitFamilyWizard}
-                    className="px-6 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-sm shadow-xs"
-                  >
-                    குடும்பத்தை பதிக (Commit & Save Family Unit)
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Official Full-Window Family Dossier, Multi-Member Entry under Head QR & A4 Print Summary */}
+      <OfficialFamilyDossierWindow
+        isOpen={dossierWindowOpen}
+        initialTab={dossierInitialTab}
+        editingHousehold={dossierEditingHousehold}
+        existingHouseholdsCount={households.length}
+        existingBeneficiaries={beneficiaries}
+        divisions={divisions}
+        lang={lang}
+        povertyWeights={povertyWeights}
+        canEdit={canEdit}
+        onClose={() => {
+          setDossierWindowOpen(false);
+          setDossierEditingHousehold(null);
+        }}
+        onSaveFamily={handleSaveOfficialFamily}
+      />
     </div>
   );
 };
