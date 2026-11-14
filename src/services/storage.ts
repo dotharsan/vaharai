@@ -31,7 +31,7 @@ import {
 } from './googleDrive';
 import { parseSriLankanNic } from '../utils/nicParser';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   USERS: 'vaharai_ds_users_v6',
   BENEFICIARIES: 'vaharai_ds_beneficiaries_v6',
   TOKENS: 'vaharai_ds_tokens_v6',
@@ -1539,14 +1539,99 @@ export const checkDuplicateAssistance = (
   };
 };
 
-// Database Snapshot for Google Drive / JSON file
-export const createDatabaseSnapshot = () => {
-  const currentBeneficiaries = loadBeneficiaries();
+export interface DivisionScope {
+  division: string;
+  dsDivisionId?: string;
+}
+
+export const getActiveDivisionScope = (): DivisionScope | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem('vaharai_ds_active_user');
+    if (!raw) return null;
+    const u = JSON.parse(raw) as User;
+    if (u?.role === 'GRAMANIILATHARI' && u.division && u.division.trim().toUpperCase() !== 'ALL') {
+      return {
+        division: u.division.trim().toUpperCase(),
+        dsDivisionId: u.dsDivisionId || 'DS_VAHARAI',
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+export const filterSnapshotByDivision = (snapshot: any, division: string, dsDivisionId?: string): any => {
+  if (!snapshot) return snapshot;
+  const targetDiv = division.trim().toUpperCase();
+  if (!targetDiv || targetDiv === 'ALL') return snapshot;
+  const matchesDiv = (itemDiv?: string, itemDs?: string) => {
+    if (String(itemDiv || '').trim().toUpperCase() !== targetDiv) return false;
+    if (dsDivisionId && dsDivisionId !== 'ALL' && (itemDs || 'DS_VAHARAI') !== dsDivisionId) return false;
+    return true;
+  };
   return {
+    ...snapshot,
+    scopedDivision: targetDiv,
+    scopedDsDivisionId: dsDivisionId,
+    users: Array.isArray(snapshot.users)
+      ? snapshot.users.filter((u: any) => String(u.division || '').trim().toUpperCase() === targetDiv || u.role === 'SUPERADMIN')
+      : snapshot.users,
+    divisions: Array.isArray(snapshot.divisions)
+      ? snapshot.divisions.filter((d: any) => matchesDiv(d.code, d.dsDivisionId))
+      : snapshot.divisions,
+    beneficiaries: Array.isArray(snapshot.beneficiaries)
+      ? snapshot.beneficiaries.filter((b: any) => matchesDiv(b.divisionCode, b.dsDivisionId))
+      : snapshot.beneficiaries,
+    households: Array.isArray(snapshot.households)
+      ? snapshot.households.filter((h: any) => matchesDiv(h.divisionCode, h.dsDivisionId))
+      : snapshot.households,
+    assistance: Array.isArray(snapshot.assistance)
+      ? snapshot.assistance.filter((a: any) => matchesDiv(a.divisionCode, a.dsDivisionId))
+      : snapshot.assistance,
+    pregnantMothers: Array.isArray(snapshot.pregnantMothers)
+      ? snapshot.pregnantMothers.filter((m: any) => matchesDiv(m.divisionCode, m.dsDivisionId))
+      : snapshot.pregnantMothers,
+    landRecords: Array.isArray(snapshot.landRecords)
+      ? snapshot.landRecords.filter((l: any) => matchesDiv(l.divisionCode, l.dsDivisionId))
+      : snapshot.landRecords,
+    petitions: Array.isArray(snapshot.petitions)
+      ? snapshot.petitions.filter((p: any) => matchesDiv(p.divisionCode, p.dsDivisionId))
+      : snapshot.petitions,
+    tokens: Array.isArray(snapshot.tokens)
+      ? snapshot.tokens.filter((t: any) => matchesDiv(t.divisionCode, t.dsDivisionId))
+      : snapshot.tokens,
+  };
+};
+
+export const pruneLocalStorageToDivision = (division: string, dsDivisionId?: string): void => {
+  const targetDiv = (division || '').trim().toUpperCase();
+  if (!targetDiv || targetDiv === 'ALL') return;
+  const keepItem = (itemDiv?: string, itemDs?: string) => {
+    if (String(itemDiv || '').trim().toUpperCase() !== targetDiv) return false;
+    if (dsDivisionId && dsDivisionId !== 'ALL' && (itemDs || 'DS_VAHARAI') !== dsDivisionId) return false;
+    return true;
+  };
+  setStoredData(STORAGE_KEYS.BENEFICIARIES, loadBeneficiaries().filter((b) => keepItem(b.divisionCode, b.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.HOUSEHOLDS, loadHouseholds().filter((h) => keepItem(h.divisionCode, h.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.ASSISTANCE, loadAssistanceRecords().filter((a) => keepItem(a.divisionCode, a.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, loadPregnantMothers().filter((m) => keepItem(m.divisionCode, m.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.LAND_RECORDS, loadLandRecords().filter((l) => keepItem(l.divisionCode, l.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.PETITIONS, loadPetitions().filter((p) => keepItem(p.divisionCode, p.dsDivisionId)));
+  setStoredData(STORAGE_KEYS.TOKENS, loadTokens().filter((t) => keepItem(t.divisionCode, t.dsDivisionId)));
+  notifyCrossTabSync('DIVISION_PRUNED');
+};
+
+// Database Snapshot for Google Drive / JSON file
+export const createDatabaseSnapshot = (explicitScope?: DivisionScope | null) => {
+  const scope = explicitScope !== undefined ? explicitScope : getActiveDivisionScope();
+  const currentBeneficiaries = loadBeneficiaries();
+  const baseSnapshot: any = {
     version: '4.0',
     exportedAt: new Date().toISOString(),
     clearedAt: getLastClearAt() || undefined,
-    explicitlyCleared: currentBeneficiaries.length === 0,
+    explicitlyCleared: !scope && currentBeneficiaries.length === 0,
     organization: 'Divisional Secretariat Koralaipattu North (Vaharai)',
     users: loadUsers(),
     beneficiaries: currentBeneficiaries,
@@ -1563,6 +1648,11 @@ export const createDatabaseSnapshot = () => {
     petitions: loadPetitions(),
     driveConfig: getCurrentSharedDriveConfig(),
   };
+
+  if (scope && scope.division && scope.division !== 'ALL') {
+    return filterSnapshotByDivision(baseSnapshot, scope.division, scope.dsDivisionId);
+  }
+  return baseSnapshot;
 };
 
 export const wipeAllStorageToCleanDriveState = async (): Promise<ReturnType<typeof createDatabaseSnapshot>> => {
@@ -1616,7 +1706,7 @@ export const wipeAllStorageToCleanDriveState = async (): Promise<ReturnType<type
   setStoredData(STORAGE_KEYS.AUDIT_LOGS, []);
   setStoredData(STORAGE_KEYS.DELETED_IDS, []);
 
-  const cleanSnapshot = createDatabaseSnapshot();
+  const cleanSnapshot = createDatabaseSnapshot(null);
   await pushToCentralDatabase(cleanSnapshot);
   notifyCrossTabSync('DATABASE_WIPED_CLEAN');
   return cleanSnapshot;
@@ -1626,51 +1716,58 @@ export const restoreDatabaseFromSnapshot = (snapshot: any): boolean => {
   if (!snapshot || (!Array.isArray(snapshot.users) && !Array.isArray(snapshot.beneficiaries) && !Array.isArray(snapshot.divisions))) {
     throw new Error('Invalid backup file structure.');
   }
-  if (typeof snapshot.clearedAt === 'string' && snapshot.clearedAt) {
-    setLastClearAt(snapshot.clearedAt);
+  const activeScope = getActiveDivisionScope();
+  const effectiveSnapshot = activeScope
+    ? filterSnapshotByDivision(snapshot, activeScope.division, activeScope.dsDivisionId)
+    : snapshot;
+
+  if (typeof effectiveSnapshot.clearedAt === 'string' && effectiveSnapshot.clearedAt) {
+    setLastClearAt(effectiveSnapshot.clearedAt);
   }
-  if (Array.isArray(snapshot.users)) setStoredData(STORAGE_KEYS.USERS, snapshot.users);
-  if (Array.isArray(snapshot.beneficiaries)) {
-    snapshot.beneficiaries.forEach((b: any) => removeDeletedId(b?.id, b?.nic));
+  if (Array.isArray(effectiveSnapshot.users) && !activeScope) {
+    setStoredData(STORAGE_KEYS.USERS, effectiveSnapshot.users);
+  }
+  if (Array.isArray(effectiveSnapshot.beneficiaries)) {
+    effectiveSnapshot.beneficiaries.forEach((b: any) => removeDeletedId(b?.id, b?.nic));
     if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
       try {
-        if (snapshot.beneficiaries.length > 0) {
+        if (effectiveSnapshot.beneficiaries.length > 0) {
           localStorage.removeItem('vaharai_ds_beneficiaries_cleared');
-          if (!snapshot.explicitlyCleared) {
+          if (!effectiveSnapshot.explicitlyCleared) {
             localStorage.removeItem(LAST_CLEAR_AT_KEY);
           }
-        } else {
+        } else if (!activeScope) {
           localStorage.setItem('vaharai_ds_beneficiaries_cleared', 'true');
         }
       } catch {
         // ignore
       }
     }
-    setStoredData(STORAGE_KEYS.BENEFICIARIES, snapshot.beneficiaries);
+    setStoredData(STORAGE_KEYS.BENEFICIARIES, effectiveSnapshot.beneficiaries);
   }
-  if (Array.isArray(snapshot.tokens)) setStoredData(STORAGE_KEYS.TOKENS, snapshot.tokens);
-  if (Array.isArray(snapshot.divisions)) setStoredData(STORAGE_KEYS.DIVISIONS, snapshot.divisions);
-  if (Array.isArray(snapshot.dsDivisions)) setStoredData(STORAGE_KEYS.DS_DIVISIONS, snapshot.dsDivisions);
-  if (typeof snapshot.districtLogo === 'string' && snapshot.districtLogo.trim()) {
+  if (Array.isArray(effectiveSnapshot.tokens)) setStoredData(STORAGE_KEYS.TOKENS, effectiveSnapshot.tokens);
+  if (Array.isArray(effectiveSnapshot.divisions) && !activeScope) setStoredData(STORAGE_KEYS.DIVISIONS, effectiveSnapshot.divisions);
+  if (Array.isArray(effectiveSnapshot.dsDivisions) && !activeScope) setStoredData(STORAGE_KEYS.DS_DIVISIONS, effectiveSnapshot.dsDivisions);
+  if (typeof effectiveSnapshot.districtLogo === 'string' && effectiveSnapshot.districtLogo.trim()) {
     try {
-      localStorage.setItem(STORAGE_KEYS.DISTRICT_LOGO, snapshot.districtLogo.trim());
+      localStorage.setItem(STORAGE_KEYS.DISTRICT_LOGO, effectiveSnapshot.districtLogo.trim());
     } catch {
       // ignore
     }
-  } else if (snapshot.districtLogo === null) {
+  } else if (effectiveSnapshot.districtLogo === null) {
     try {
       localStorage.removeItem(STORAGE_KEYS.DISTRICT_LOGO);
     } catch {
       // ignore
     }
   }
-  if (Array.isArray(snapshot.assistance)) setStoredData(STORAGE_KEYS.ASSISTANCE, snapshot.assistance);
-  if (Array.isArray(snapshot.auditLogs)) setStoredData(STORAGE_KEYS.AUDIT_LOGS, snapshot.auditLogs);
-  if (Array.isArray(snapshot.pregnantMothers)) setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, snapshot.pregnantMothers);
-  if (Array.isArray(snapshot.landRecords)) setStoredData(STORAGE_KEYS.LAND_RECORDS, snapshot.landRecords);
-  if (Array.isArray(snapshot.households)) setStoredData(STORAGE_KEYS.HOUSEHOLDS, snapshot.households);
-  if (snapshot.povertyWeights) setStoredData(STORAGE_KEYS.POVERTY_WEIGHTS, snapshot.povertyWeights);
-  if (Array.isArray(snapshot.petitions)) setStoredData(STORAGE_KEYS.PETITIONS, snapshot.petitions);
+  if (Array.isArray(effectiveSnapshot.assistance)) setStoredData(STORAGE_KEYS.ASSISTANCE, effectiveSnapshot.assistance);
+  if (Array.isArray(effectiveSnapshot.auditLogs)) setStoredData(STORAGE_KEYS.AUDIT_LOGS, effectiveSnapshot.auditLogs);
+  if (Array.isArray(effectiveSnapshot.pregnantMothers)) setStoredData(STORAGE_KEYS.PREGNANT_MOTHERS, effectiveSnapshot.pregnantMothers);
+  if (Array.isArray(effectiveSnapshot.landRecords)) setStoredData(STORAGE_KEYS.LAND_RECORDS, effectiveSnapshot.landRecords);
+  if (Array.isArray(effectiveSnapshot.households)) setStoredData(STORAGE_KEYS.HOUSEHOLDS, effectiveSnapshot.households);
+  if (effectiveSnapshot.povertyWeights) setStoredData(STORAGE_KEYS.POVERTY_WEIGHTS, effectiveSnapshot.povertyWeights);
+  if (Array.isArray(effectiveSnapshot.petitions)) setStoredData(STORAGE_KEYS.PETITIONS, effectiveSnapshot.petitions);
 
   notifyCrossTabSync('DATABASE_RESTORED');
   return true;
@@ -1711,24 +1808,36 @@ export const scheduleCentralSync = () => {
 
   if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(() => {
-    const snapshot = createDatabaseSnapshot();
-    // 1. Automatically push to the designated Google Drive file if authenticated or Relay active
-    scheduleAutoDriveSync(snapshot);
+    const scope = getActiveDivisionScope();
+    const snapshot = createDatabaseSnapshot(scope);
+    // 1. Only full-access users push complete Drive backup; GN division-scoped users push via scoped server merge
+    if (!scope) {
+      scheduleAutoDriveSync(snapshot);
+    }
 
-    // 2. Also push to central backend server if available
+    // 2. Push to central backend server (server automatically merges if snapshot.scopedDivision is set)
     if (serverApiAvailable !== false) {
       pushToCentralDatabase(snapshot);
     }
   }, 300);
 };
 
-export const fetchCentralDatabase = async (): Promise<any | null> => {
+export const fetchCentralDatabase = async (scopeOverride?: DivisionScope | null): Promise<any | null> => {
   if (serverApiAvailable === false) {
     return null;
   }
 
   try {
-    const res = await fetch('/api/database');
+    const activeScope = scopeOverride !== undefined ? scopeOverride : getActiveDivisionScope();
+    const params = new URLSearchParams();
+    if (activeScope?.division && activeScope.division !== 'ALL') {
+      params.set('division', activeScope.division);
+      if (activeScope.dsDivisionId && activeScope.dsDivisionId !== 'ALL') {
+        params.set('dsDivisionId', activeScope.dsDivisionId);
+      }
+    }
+    const queryStr = params.toString();
+    const res = await fetch(queryStr ? `/api/database?${queryStr}` : '/api/database');
     if (res.status === 404) {
       serverApiAvailable = false;
       console.info(`[Vaharai DS] Central /api/database returned 404. Active mode: Cloud Drive & Local Storage.`);

@@ -1242,3 +1242,21 @@ export interface PublicPetition {
   updatedAt: string;
 }
 
+export interface FieldOfficerLocation {
+  key?: string;
+  deviceId: string;
+  userId: string;
+  userName: string;
+  role: string;
+  division: string;
+  dsDivisionId: string;
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  heading?: number | null;
+  speed?: number | null;
+  isInstalledPwa: boolean;
+  isMobileFieldMode: boolean;
+  userAgent?: string;
+  updatedAt: string;
+}

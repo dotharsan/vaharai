@@ -50,6 +50,9 @@ import {
   hydrateStorageFromIndexedDb,
   getLastClearAt,
   setLastClearAt,
+  getActiveDivisionScope,
+  filterSnapshotByDivision,
+  pruneLocalStorageToDivision,
 } from './services/storage';
 import {
   getActiveUserSession,
@@ -100,12 +103,45 @@ import { BarcodeScannerModal } from './components/BarcodeScannerModal';
 import { StorageTransparencyModal } from './components/StorageTransparencyModal';
 import { OfficeLayoutModal } from './components/OfficeLayoutModal';
 import { Sidebar } from './components/Sidebar';
+import { MobileFamilyFieldApp } from './components/MobileFamilyFieldApp';
+import { FieldOfficersLocationMapView } from './components/FieldOfficersLocationMapView';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { useFieldLocationReporter, detectInstalledPwa } from './services/fieldLocationTracker';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 
 export default function App() {
   // Authentication & Session
   const [currentUser, setCurrentUser] = useState<User | null>(() => getActiveUserSession());
   const [lang, setLang] = useState<Language>('ta');
+  const isOnline = useOnlineStatus();
+  const [mobileFieldMode, setMobileFieldMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'mobile-field') return true;
+    try {
+      return localStorage.getItem('vaharai_mobile_field_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const setMobileModeEnabled = (next: boolean) => {
+    setMobileFieldMode(next);
+    try {
+      if (next) {
+        localStorage.setItem('vaharai_mobile_field_mode', 'true');
+      } else {
+        localStorage.removeItem('vaharai_mobile_field_mode');
+      }
+      const url = new URL(window.location.href);
+      if (next) url.searchParams.set('mode', 'mobile-field');
+      else url.searchParams.delete('mode');
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // ignore
+    }
+  };
+
   const [navState, setNavState] = useState<{ history: string[]; index: number }>({
     history: ['dashboard'],
     index: 0,
@@ -176,14 +212,36 @@ export default function App() {
   const [showStorageModal, setShowStorageModal] = useState<boolean>(false);
   const [showOfficeLayoutModal, setShowOfficeLayoutModal] = useState<boolean>(false);
 
+  // Google Maps Platform Case A Quota Exceeded State
+  const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState<boolean>(false);
+  useEffect(() => {
+    const handleQuota = () => setGmpQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuota);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuota);
+  }, []);
+
+  // Report live GPS coordinates when app is installed as PWA, in Mobile Field Mode, or used by Grama Niladhari
+  const gpsReporter = useFieldLocationReporter(
+    currentUser,
+    Boolean(mobileFieldMode && currentUser?.role === 'GRAMANIILATHARI')
+  );
+
   // Restore active user session if exists
   useEffect(() => {
     const session = getActiveUserSession();
     if (session) {
-      const found = users.find((u) => u.id === session.id);
+      const found = users.find((u) => u.id === session.id) || session;
       if (found) {
         setCurrentUser(found);
         setSelectedDsDivisionId(found.role === 'DISTRICT_ADMIN' ? 'ALL' : (found.dsDivisionId || 'DS_VAHARAI'));
+        if (found.role === 'GRAMANIILATHARI') {
+          if (found.division && found.division.trim().toUpperCase() !== 'ALL') {
+            pruneLocalStorageToDivision(found.division, found.dsDivisionId);
+            handleDatabaseReload();
+          }
+        } else {
+          setMobileModeEnabled(false);
+        }
         if (found.role === 'DISTRICT_ADMIN') {
           resetNavTab('district');
         } else if (found.role === 'LAND_OFFICER') {
@@ -286,45 +344,53 @@ export default function App() {
 
     const hydrateAllFromRemote = (remote: any) => {
       if (!remote || !isMounted) return;
-      const incomingStamp = String(remote.lastServerSync || remote.exportedAt || '');
+      const scope = getActiveDivisionScope();
+      const effectiveRemote = scope
+        ? filterSnapshotByDivision(remote, scope.division, scope.dsDivisionId)
+        : remote;
+
+      const incomingStamp = String(effectiveRemote.lastServerSync || effectiveRemote.exportedAt || '');
       if (incomingStamp && incomingStamp === lastPulledRemoteStamp) {
         return;
       }
       if (incomingStamp) lastPulledRemoteStamp = incomingStamp;
-      if (remote.driveConfig && typeof remote.driveConfig === 'object') {
-        applySharedDriveConfigLocally(remote.driveConfig);
+      if (effectiveRemote.driveConfig && typeof effectiveRemote.driveConfig === 'object') {
+        applySharedDriveConfigLocally(effectiveRemote.driveConfig);
       }
-      if (Array.isArray(remote.dsDivisions) && remote.dsDivisions.length > 0) {
+      if (!scope && Array.isArray(effectiveRemote.dsDivisions) && effectiveRemote.dsDivisions.length > 0) {
         try {
-          localStorage.setItem('vaharai_ds_secretariats_v1', JSON.stringify(remote.dsDivisions));
+          localStorage.setItem('vaharai_ds_secretariats_v1', JSON.stringify(effectiveRemote.dsDivisions));
         } catch { /* ignore */ }
       }
-      if (typeof remote.districtLogo === 'string' && remote.districtLogo.trim()) {
+      if (typeof effectiveRemote.districtLogo === 'string' && effectiveRemote.districtLogo.trim()) {
         try {
-          localStorage.setItem('vaharai_ds_district_logo_v1', remote.districtLogo.trim());
+          localStorage.setItem('vaharai_ds_district_logo_v1', effectiveRemote.districtLogo.trim());
         } catch { /* ignore */ }
       }
-      if (Array.isArray(remote.divisions) && remote.divisions.length > 0) {
-        const mergedDivs = mergeByKey(loadDivisions(), remote.divisions, (d) => (d.code || '').trim().toUpperCase());
+      if (Array.isArray(effectiveRemote.divisions) && effectiveRemote.divisions.length > 0) {
+        const mergedDivs = scope
+          ? effectiveRemote.divisions
+          : mergeByKey(loadDivisions(), effectiveRemote.divisions, (d) => (d.code || '').trim().toUpperCase());
         saveDivisions(mergedDivs, false);
         setDivisions(mergedDivs);
       }
-      if (Array.isArray(remote.users) && remote.users.length > 0) {
-        const mergedUsers = mergeByKey(loadUsers(), remote.users, (u) => u.id);
+      if (!scope && Array.isArray(effectiveRemote.users) && effectiveRemote.users.length > 0) {
+        const mergedUsers = mergeByKey(loadUsers(), effectiveRemote.users, (u) => u.id);
         saveUsers(mergedUsers, false);
         setUsers(mergedUsers);
       }
 
       // If remote explicitly cleared all beneficiaries/records more recently than this browser, mirror empty state
-      const remoteClearTime = remote.clearedAt ? Date.parse(remote.clearedAt) : 0;
+      const remoteClearTime = effectiveRemote.clearedAt ? Date.parse(effectiveRemote.clearedAt) : 0;
       const localClearTime = getLastClearAt() ? Date.parse(getLastClearAt()) : 0;
       if (
-        remote.explicitlyCleared === true &&
-        Array.isArray(remote.beneficiaries) &&
-        remote.beneficiaries.length === 0 &&
+        !scope &&
+        effectiveRemote.explicitlyCleared === true &&
+        Array.isArray(effectiveRemote.beneficiaries) &&
+        effectiveRemote.beneficiaries.length === 0 &&
         remoteClearTime > localClearTime
       ) {
-        setLastClearAt(remote.clearedAt);
+        setLastClearAt(effectiveRemote.clearedAt);
         saveBeneficiaries([], false, false);
         setBeneficiaries([]);
         saveHouseholds([], false);
@@ -343,56 +409,92 @@ export default function App() {
       }
 
       // Guard against stale remote Drive/server snapshots exported before the local storage wipe
-      const remoteDataStamp = Date.parse(String(remote.lastServerSync || remote.exportedAt || '')) || 0;
-      if (localClearTime > 0 && !remote.explicitlyCleared && (remoteDataStamp === 0 || remoteDataStamp <= localClearTime)) {
+      const remoteDataStamp = Date.parse(String(effectiveRemote.lastServerSync || effectiveRemote.exportedAt || '')) || 0;
+      if (!scope && localClearTime > 0 && !effectiveRemote.explicitlyCleared && (remoteDataStamp === 0 || remoteDataStamp <= localClearTime)) {
         return;
       }
 
-      if (Array.isArray(remote.beneficiaries) && remote.beneficiaries.length > 0) {
-        const mergedBens = mergeByKey(
-          loadBeneficiaries(),
-          remote.beneficiaries,
-          (b) => b.id || b.nic,
-          (b) => isRecordDeleted(b.id, b.nic)
-        );
+      if (Array.isArray(effectiveRemote.beneficiaries)) {
+        const baseLocal = scope
+          ? loadBeneficiaries().filter((b) => (b.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadBeneficiaries();
+        const mergedBens = effectiveRemote.beneficiaries.length > 0
+          ? mergeByKey(
+              baseLocal,
+              effectiveRemote.beneficiaries,
+              (b) => b.id || b.nic,
+              (b) => isRecordDeleted(b.id, b.nic)
+            )
+          : baseLocal;
         saveBeneficiaries(mergedBens, false, false);
         setBeneficiaries(mergedBens);
       }
-      if (Array.isArray(remote.households) && remote.households.length > 0) {
-        const mergedHouseholds = mergeByKey(loadHouseholds(), remote.households, (h) => h.familyCode || h.id);
+      if (Array.isArray(effectiveRemote.households)) {
+        const baseLocal = scope
+          ? loadHouseholds().filter((h) => (h.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadHouseholds();
+        const mergedHouseholds = effectiveRemote.households.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.households, (h) => h.familyCode || h.id)
+          : baseLocal;
         saveHouseholds(mergedHouseholds, false);
         setHouseholds(mergedHouseholds);
       }
-      if (Array.isArray(remote.landRecords) && remote.landRecords.length > 0) {
-        const mergedLand = mergeByKey(loadLandRecords(), remote.landRecords, (l) => l.id || l.permitNo);
+      if (Array.isArray(effectiveRemote.landRecords)) {
+        const baseLocal = scope
+          ? loadLandRecords().filter((l) => (l.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadLandRecords();
+        const mergedLand = effectiveRemote.landRecords.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.landRecords, (l) => l.id || l.permitNo)
+          : baseLocal;
         saveLandRecords(mergedLand, false);
         setLandRecords(mergedLand);
       }
-      if (Array.isArray(remote.pregnantMothers) && remote.pregnantMothers.length > 0) {
-        const mergedMat = mergeByKey(loadPregnantMothers(), remote.pregnantMothers, (m) => m.id || m.nic, (m) => isRecordDeleted(m.id, m.nic));
+      if (Array.isArray(effectiveRemote.pregnantMothers)) {
+        const baseLocal = scope
+          ? loadPregnantMothers().filter((m) => (m.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadPregnantMothers();
+        const mergedMat = effectiveRemote.pregnantMothers.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.pregnantMothers, (m) => m.id || m.nic, (m) => isRecordDeleted(m.id, m.nic))
+          : baseLocal;
         savePregnantMothers(mergedMat, false);
         setPregnantMothers(mergedMat);
       }
-      if (Array.isArray(remote.assistance) && remote.assistance.length > 0) {
-        const mergedAid = mergeByKey(loadAssistanceRecords(), remote.assistance, (a) => a.id);
+      if (Array.isArray(effectiveRemote.assistance)) {
+        const baseLocal = scope
+          ? loadAssistanceRecords().filter((a) => (a.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadAssistanceRecords();
+        const mergedAid = effectiveRemote.assistance.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.assistance, (a) => a.id)
+          : baseLocal;
         saveAssistanceRecords(mergedAid, false);
         setAssistanceRecords(mergedAid);
       }
-      if (Array.isArray(remote.tokens) && remote.tokens.length > 0) {
-        const mergedTokens = mergeByKey(loadTokens(), remote.tokens, (t) => t.id);
+      if (Array.isArray(effectiveRemote.tokens)) {
+        const baseLocal = scope
+          ? loadTokens().filter((t) => (t.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadTokens();
+        const mergedTokens = effectiveRemote.tokens.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.tokens, (t) => t.id)
+          : baseLocal;
         saveTokens(mergedTokens, false);
         setTokens(mergedTokens);
       }
-      if (Array.isArray(remote.petitions) && remote.petitions.length > 0) {
-        const mergedPetitions = mergeByKey(loadPetitions(), remote.petitions, (p) => p.id);
+      if (Array.isArray(effectiveRemote.petitions)) {
+        const baseLocal = scope
+          ? loadPetitions().filter((p) => (p.divisionCode || '').trim().toUpperCase() === scope.division)
+          : loadPetitions();
+        const mergedPetitions = effectiveRemote.petitions.length > 0
+          ? mergeByKey(baseLocal, effectiveRemote.petitions, (p) => p.id)
+          : baseLocal;
         savePetitions(mergedPetitions, false);
         setPetitions(mergedPetitions);
       }
     };
 
-    // Boot: Sync shared Drive config from central server, then pull shared Google Drive storage for ALL staff browsers
+    // Boot: Sync shared Drive config from central server, then pull shared Google Drive storage (skipped for GN-scoped users so other divisions never download)
     const pullFromDesignatedDrive = async () => {
       try {
+        if (getActiveDivisionScope()) return;
         await fetchSharedDriveConfigFromServer();
         const driveData = await fetchFromDesignatedDriveFile();
         if (driveData && isMounted) {
@@ -405,28 +507,39 @@ export default function App() {
 
     const runCentralSyncCycle = async (forcePull: boolean = false) => {
       if (!isMounted) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        const rawQueue = localStorage.getItem('vaharai_mobile_offline_sync_queue_v1');
+        if (rawQueue && JSON.parse(rawQueue).length > 0) {
+          // Wait for MobileFamilyFieldApp safe-merge upload instead of blind overwrite
+          return;
+        }
+      } catch {
+        // ignore
+      }
 
+      const activeScope = getActiveDivisionScope();
       const currentMutationAt = getLastLocalMutationAt();
       const hasLocalChanges = currentMutationAt > lastSyncedMutationAt;
 
-      if (forcePull) {
+      if (forcePull && !activeScope) {
         await fetchSharedDriveConfigFromServer();
       }
 
-      // 1. Push any local mutations to central server immediately
+      // 1. Push any local mutations to central server immediately (server merges scoped division if GN user)
       if (hasLocalChanges && isServerApiAvailable()) {
-        const pushed = await pushToCentralDatabase(createDatabaseSnapshot());
+        const pushed = await pushToCentralDatabase(createDatabaseSnapshot(activeScope));
         if (pushed) {
           lastSyncedMutationAt = currentMutationAt;
         }
       }
 
-      // 2. Google Drive shared sync check (direct OAuth OR shared Apps Script Relay OR public read on forcePull)
-      const canWriteDrive = isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl();
+      // 2. Google Drive shared sync check (skipped for GN-scoped users so other divisions never download or overwrite)
+      const canWriteDrive = !activeScope && (isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl());
       if (canWriteDrive) {
         try {
           if (hasLocalChanges && isDriveAutoSyncEnabled() && !isDriveSyncBusy()) {
-            await saveToDesignatedDriveFile(createDatabaseSnapshot());
+            await saveToDesignatedDriveFile(createDatabaseSnapshot(null));
             lastSyncedMutationAt = currentMutationAt;
           } else if (!hasLocalChanges && !isDriveSyncBusy()) {
             const driveData = await fetchFromDesignatedDriveFile();
@@ -437,7 +550,7 @@ export default function App() {
         } catch {
           // silent offline fallback
         }
-      } else if (forcePull && !isDriveSyncBusy()) {
+      } else if (!activeScope && forcePull && !isDriveSyncBusy()) {
         try {
           const driveData = await fetchFromDesignatedDriveFile();
           if (driveData && isMounted) {
@@ -448,10 +561,10 @@ export default function App() {
         }
       }
 
-      // 3. Central Server pull for all collections (beneficiaries, households, mothers, land, petitions, etc.)
+      // 3. Central Server pull for all collections (filtered by ?division=... when GN user is active)
       if (isServerApiAvailable() && (!hasLocalChanges || forcePull)) {
         try {
-          const central = await fetchCentralDatabase();
+          const central = await fetchCentralDatabase(activeScope);
           if (central && isMounted) {
             const stamp = String(central.lastServerSync || central.exportedAt || '');
             if (forcePull || !stamp || stamp !== lastCentralSyncStamp) {
@@ -472,19 +585,25 @@ export default function App() {
         handleDatabaseReload();
       }
 
-      await pullFromDesignatedDrive();
+      const activeScope = getActiveDivisionScope();
+      if (activeScope) {
+        pruneLocalStorageToDivision(activeScope.division, activeScope.dsDivisionId);
+        handleDatabaseReload();
+      } else {
+        await pullFromDesignatedDrive();
+      }
 
       // 2. Pull central database & push merged snapshot if local IndexedDB had extra records
       try {
         if (isServerApiAvailable()) {
           const localBeforeCount = loadBeneficiaries().length + loadHouseholds().length;
-          const central = await fetchCentralDatabase();
+          const central = await fetchCentralDatabase(activeScope);
           if (central && isMounted) {
             const centralCount = (central.beneficiaries?.length || 0) + (central.households?.length || 0);
             hydrateAllFromRemote(central);
             if (central.lastServerSync) lastCentralSyncStamp = String(central.lastServerSync);
             if (localBeforeCount > centralCount) {
-              await pushToCentralDatabase(createDatabaseSnapshot());
+              await pushToCentralDatabase(createDatabaseSnapshot(activeScope));
             }
           }
         }
@@ -502,7 +621,9 @@ export default function App() {
 
     const handleVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        void flushAutoDriveSync();
+        if (!getActiveDivisionScope()) {
+          void flushAutoDriveSync();
+        }
         return;
       }
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
@@ -510,7 +631,9 @@ export default function App() {
       }
     };
     const handlePageHide = () => {
-      void flushAutoDriveSync();
+      if (!getActiveDivisionScope()) {
+        void flushAutoDriveSync();
+      }
     };
     window.addEventListener('focus', handleVisibilityOrFocus);
     window.addEventListener('pagehide', handlePageHide);
@@ -530,6 +653,28 @@ export default function App() {
     setActiveUserSession(user);
     const initialDsId = user.role === 'DISTRICT_ADMIN' ? 'ALL' : (user.dsDivisionId || 'DS_VAHARAI');
     setSelectedDsDivisionId(initialDsId);
+
+    if (user.role === 'GRAMANIILATHARI') {
+      const gnDiv = (user.division || '').trim().toUpperCase();
+      if (gnDiv && gnDiv !== 'ALL') {
+        pruneLocalStorageToDivision(gnDiv, user.dsDivisionId || 'DS_VAHARAI');
+        handleDatabaseReload();
+        const scope = { division: gnDiv, dsDivisionId: user.dsDivisionId || 'DS_VAHARAI' };
+        void fetchCentralDatabase(scope).then((central) => {
+          if (central) {
+            restoreDatabaseFromSnapshot(filterSnapshotByDivision(central, scope.division, scope.dsDivisionId));
+            pruneLocalStorageToDivision(scope.division, scope.dsDivisionId);
+            handleDatabaseReload();
+          }
+        });
+      }
+      if (detectInstalledPwa()) {
+        setMobileModeEnabled(true);
+      }
+    } else {
+      setMobileModeEnabled(false);
+    }
+
     if (user.role === 'DISTRICT_ADMIN') {
       resetNavTab('district');
     } else if (user.role === 'LAND_OFFICER') {
@@ -743,38 +888,64 @@ export default function App() {
     }
   };
 
-  // Scoped datasets filtered by tenant secretariat
-  const scopedDivisions = activeTenantDsId
-    ? divisions.filter((d) => (d.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : divisions;
+  // Strict GN Division Lock for Grama Niladhari users (never show/download other divisions)
+  const gnLockedDiv =
+    currentUser?.role === 'GRAMANIILATHARI' &&
+    currentUser.division &&
+    currentUser.division.trim().toUpperCase() !== 'ALL'
+      ? currentUser.division.trim().toUpperCase()
+      : null;
+  const matchesDivisionScope = (itemDivCode?: string) =>
+    !gnLockedDiv || (itemDivCode || '').trim().toUpperCase() === gnLockedDiv;
 
-  const scopedBeneficiaries = activeTenantDsId
-    ? beneficiaries.filter((b) => (b.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : beneficiaries;
+  // Scoped datasets filtered by tenant secretariat AND GN division lock
+  const scopedDivisions = divisions.filter(
+    (d) =>
+      (!activeTenantDsId || (d.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      (!gnLockedDiv || (d.code || '').trim().toUpperCase() === gnLockedDiv)
+  );
 
-  const scopedTokens = activeTenantDsId
-    ? tokens.filter((t) => (t.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : tokens;
+  const scopedBeneficiaries = beneficiaries.filter(
+    (b) =>
+      (!activeTenantDsId || (b.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(b.divisionCode)
+  );
 
-  const scopedAssistanceRecords = activeTenantDsId
-    ? assistanceRecords.filter((a) => (a.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : assistanceRecords;
+  const scopedTokens = tokens.filter(
+    (t) =>
+      (!activeTenantDsId || (t.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(t.divisionCode)
+  );
 
-  const scopedPregnantMothers = activeTenantDsId
-    ? pregnantMothers.filter((m) => (m.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : pregnantMothers;
+  const scopedAssistanceRecords = assistanceRecords.filter(
+    (a) =>
+      (!activeTenantDsId || (a.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(a.divisionCode)
+  );
 
-  const scopedLandRecords = activeTenantDsId
-    ? landRecords.filter((l) => (l.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : landRecords;
+  const scopedPregnantMothers = pregnantMothers.filter(
+    (m) =>
+      (!activeTenantDsId || (m.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(m.divisionCode)
+  );
 
-  const scopedHouseholds = activeTenantDsId
-    ? households.filter((h) => (h.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : households;
+  const scopedLandRecords = landRecords.filter(
+    (l) =>
+      (!activeTenantDsId || (l.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(l.divisionCode)
+  );
 
-  const scopedPetitions = activeTenantDsId
-    ? petitions.filter((p) => (p.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId)
-    : petitions;
+  const scopedHouseholds = households.filter(
+    (h) =>
+      (!activeTenantDsId || (h.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(h.divisionCode)
+  );
+
+  const scopedPetitions = petitions.filter(
+    (p) =>
+      (!activeTenantDsId || (p.dsDivisionId || 'DS_VAHARAI') === activeTenantDsId) &&
+      matchesDivisionScope(p.divisionCode)
+  );
 
   const scopedUsers = isDistrictAdmin
     ? (selectedDsDivisionId !== 'ALL'
@@ -801,6 +972,24 @@ export default function App() {
     setIsManualSyncing(true);
     setSyncToastMessage('');
     try {
+      const scope = getActiveDivisionScope();
+      if (scope) {
+        const central = await fetchCentralDatabase(scope);
+        if (central) {
+          restoreDatabaseFromSnapshot(filterSnapshotByDivision(central, scope.division, scope.dsDivisionId));
+          pruneLocalStorageToDivision(scope.division, scope.dsDivisionId);
+          handleDatabaseReload();
+          setSyncToastMessage(
+            lang === 'ta'
+              ? `GN பிரிவு ${scope.division} தரவுகள் மட்டும் சர்வரிலிருந்து புதுப்பிக்கப்பட்டன!`
+              : `Refreshed GN ${scope.division} data from server!`
+          );
+        } else {
+          setSyncToastMessage(lang === 'ta' ? 'சர்வர் இணைப்பு கிடைக்கவில்லை' : 'Could not reach server');
+        }
+        return;
+      }
+
       await fetchSharedDriveConfigFromServer();
       const driveData = await fetchFromDesignatedDriveFile();
       if (driveData && Array.isArray(driveData.beneficiaries)) {
@@ -833,8 +1022,18 @@ export default function App() {
     setIsManualSyncing(true);
     setSyncToastMessage(lang === 'ta' ? 'டிரைவில் சேமிக்கப்படுகிறது...' : 'Saving to Google Drive & Central Server...');
     try {
-      const snapshot = createDatabaseSnapshot();
+      const scope = getActiveDivisionScope();
+      const snapshot = createDatabaseSnapshot(scope);
       await pushToCentralDatabase(snapshot);
+
+      if (scope) {
+        setSyncToastMessage(
+          lang === 'ta'
+            ? `✅ GN பிரிவு ${scope.division} தரவுகள் பிரதான சர்வரில் பாதுகாப்பாக இணைக்கப்பட்டன!`
+            : `✅ GN ${scope.division} records synced safely to Central Server!`
+        );
+        return;
+      }
 
       if (isGoogleDriveAuthenticated() || !!getAppsScriptRelayUrl()) {
         const res = await saveToDesignatedDriveFile(snapshot);
@@ -928,6 +1127,8 @@ export default function App() {
         lang={lang}
         setLang={setLang}
         onLoginSuccess={handleLoginSuccess}
+        mobileFieldPreferred={mobileFieldMode}
+        onToggleMobileFieldPreferred={setMobileModeEnabled}
       />
     );
   }
@@ -971,6 +1172,8 @@ export default function App() {
     safeTab = 'dashboard';
   } else if (currentTab === 'staff' && !canAccessStaff) {
     safeTab = 'dashboard';
+  } else if (currentTab === 'field-map' && !isSuperAdmin) {
+    safeTab = 'dashboard';
   } else if (currentTab === 'services' && !isSuperAdmin) {
     safeTab = 'dashboard';
   } else if (currentTab === 'beneficiaries' && isReception) {
@@ -991,8 +1194,52 @@ export default function App() {
     safeTab = 'dashboard';
   }
 
+  const gmpQuotaBanner = gmpQuotaExceeded ? (
+    <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
+      <span>
+        Google Maps Platform quota reached. If you are the app owner, visit{' '}
+        <a
+          href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline font-semibold text-amber-950 hover:text-amber-800"
+        >
+          maps developer site
+        </a>{' '}
+        for instructions to update your account.
+      </span>
+    </div>
+  ) : null;
+
+  if (mobileFieldMode && isGramaNiladhari) {
+    return (
+      <>
+        {gmpQuotaBanner}
+        <MobileFamilyFieldApp
+          currentUser={currentUser}
+          households={scopedHouseholds}
+          beneficiaries={scopedBeneficiaries}
+          assistanceRecords={scopedAssistanceRecords}
+          divisions={scopedDivisions}
+          povertyWeights={povertyWeights}
+          lang={lang}
+          setLang={setLang}
+          onDatabaseReload={handleDatabaseReload}
+          onExitMobileMode={() => setMobileModeEnabled(false)}
+          onLogout={handleLogout}
+          gpsStatus={gpsReporter.status}
+          gpsLastCoords={gpsReporter.lastCoords}
+          gpsSharingEnabled={gpsReporter.isSharingEnabled}
+          onToggleGpsSharing={gpsReporter.setSharingEnabled}
+          onRefreshGps={gpsReporter.refreshNow}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans w-full max-w-full overflow-x-hidden">
+      {gmpQuotaBanner}
       {/* Top Header */}
       <Header
         currentUser={currentUser}
@@ -1016,7 +1263,15 @@ export default function App() {
         canGoForward={canGoForward}
         onGoBack={handleGoBack}
         onGoForward={handleGoForward}
+        onOpenMobileFieldApp={isGramaNiladhari ? () => setMobileModeEnabled(true) : undefined}
       />
+
+      {!isOnline && (
+        <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 shadow-lg no-print">
+          <span className="h-2 w-2 rounded-full bg-slate-950 animate-pulse" />
+          <span>{lang === 'ta' ? 'ஆஃப்லைன் பயன்முறை — சேமிக்கப்பட்ட தரவுகள்' : 'Offline Mode — Cached data is being used.'}</span>
+        </div>
+      )}
 
       {/* Floating Status / Sync Toast */}
       {syncToastMessage && (
@@ -1273,6 +1528,7 @@ export default function App() {
             onUpdateBeneficiaries={handleUpdateBeneficiaries}
             onUpdatePovertyWeights={handleUpdatePovertyWeights}
             onAuditLog={handleAuditLog}
+            onOpenMobileFieldApp={isGramaNiladhari ? () => setMobileModeEnabled(true) : undefined}
           />
         )}
 
@@ -1341,6 +1597,15 @@ export default function App() {
             lang={lang}
             onUpdateUsers={handleUpdateUsers}
             onAuditLog={handleAuditLog}
+          />
+        )}
+
+        {safeTab === 'field-map' && isSuperAdmin && (
+          <FieldOfficersLocationMapView
+            currentUser={currentUser}
+            divisions={scopedDivisions}
+            lang={lang}
+            selectedDsDivisionId={selectedDsDivisionId}
           />
         )}
       </main>

@@ -78,6 +78,7 @@ interface OfficialFamilyDossierWindowProps {
   povertyWeights: PovertyScoringWeights;
   canEdit: boolean;
   isSuperAdmin?: boolean;
+  lockedDivisionCode?: string;
   onClose: () => void;
   onSaveFamily: (payload: {
     household: HouseholdData;
@@ -184,6 +185,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   povertyWeights,
   canEdit,
   isSuperAdmin = false,
+  lockedDivisionCode,
   onClose,
   onSaveFamily,
 }) => {
@@ -192,7 +194,11 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [showDetailedIncomeExpense, setShowDetailedIncomeExpense] = useState(false);
 
-  const defaultDiv = divisions[0]?.code || '211';
+  const effectiveLockedDiv =
+    lockedDivisionCode && lockedDivisionCode.trim().toUpperCase() !== 'ALL'
+      ? lockedDivisionCode.trim().toUpperCase()
+      : '';
+  const defaultDiv = effectiveLockedDiv || divisions[0]?.code || '211';
 
   const [meta, setMeta] = useState({
     familyCode: '',
@@ -237,7 +243,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         applicantNic: editingHousehold.applicantNic,
         phone: editingHousehold.phone || '',
         address: editingHousehold.address || '',
-        divisionCode: editingHousehold.divisionCode || defaultDiv,
+        divisionCode: effectiveLockedDiv || editingHousehold.divisionCode || defaultDiv,
         status: editingHousehold.status || 'DS_ENDORSED',
         selectedCategory: editingHousehold.selectedCategory || 'VULNERABLE',
         bankName: editingHousehold.bankDetails?.bankName || 'Peoples Bank',
@@ -382,7 +388,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
       ]);
       setInitialMemberIds([]);
     }
-  }, [isOpen, editingHousehold, initialTab]);
+  }, [isOpen, editingHousehold, initialTab, effectiveLockedDiv]);
 
   // Live QR Generation from Head's familyCode
   const effectiveFamilyCode = meta.familyCode.trim() || `FAM-${meta.divisionCode}-${String(existingHouseholdsCount + 1).padStart(4, '0')}`;
@@ -503,7 +509,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
     }
 
     const now = new Date().toISOString();
-    const divCode = meta.divisionCode || '211';
+    const divCode = effectiveLockedDiv || meta.divisionCode || '211';
     const familyCode = effectiveFamilyCode;
     const familyQrPayload = familyCode;
 
@@ -955,11 +961,23 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">கிராம அலுவலர் பிரிவு (GN Division) *</label>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    கிராம அலுவலர் பிரிவு (GN Division) *{' '}
+                    {effectiveLockedDiv && (
+                      <span className="text-[10px] text-emerald-800 font-mono">
+                        ({isTa ? 'பூட்டப்பட்டது' : 'Locked'}: {effectiveLockedDiv})
+                      </span>
+                    )}
+                  </label>
                   <select
-                    value={meta.divisionCode}
-                    onChange={(e) => setMeta({ ...meta, divisionCode: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-semibold"
+                    value={effectiveLockedDiv || meta.divisionCode}
+                    disabled={Boolean(effectiveLockedDiv)}
+                    onChange={(e) => {
+                      if (!effectiveLockedDiv) {
+                        setMeta({ ...meta, divisionCode: e.target.value });
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white disabled:bg-slate-100 disabled:text-slate-700 font-semibold"
                   >
                     {divisions.map((d) => (
                       <option key={d.code} value={d.code}>

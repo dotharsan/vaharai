@@ -24,6 +24,7 @@ import {
   Droplets,
   FileText,
   UserPlus,
+  Smartphone,
 } from 'lucide-react';
 import {
   clearAllHouseholdsPermanently,
@@ -48,6 +49,7 @@ interface FamilyDataCenterViewProps {
   onUpdateBeneficiaries: (items: Beneficiary[]) => void;
   onUpdatePovertyWeights: (weights: PovertyScoringWeights) => void;
   onAuditLog: (action: string, details: string) => void;
+  onOpenMobileFieldApp?: () => void;
 }
 
 export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
@@ -62,16 +64,21 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
   onUpdateBeneficiaries,
   onUpdatePovertyWeights,
   onAuditLog,
+  onOpenMobileFieldApp,
 }) => {
   const t = translations[lang];
 
   // Role permissions
   const isSuperAdmin = currentUser.role === 'SUPERADMIN';
+  const isGnLocked =
+    currentUser.role === 'GRAMANIILATHARI' &&
+    Boolean(currentUser.division && currentUser.division.trim().toUpperCase() !== 'ALL');
+  const lockedDiv = isGnLocked ? (currentUser.division || '').trim().toUpperCase() : '';
   const canEdit = isSuperAdmin || currentUser.role === 'ADMIN 1' || currentUser.role === 'ADMIN 2' || currentUser.role === 'GRAMANIILATHARI';
 
   // Filters State
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDivision, setSelectedDivision] = useState<string>('ALL');
+  const [selectedDivision, setSelectedDivision] = useState<string>(lockedDiv || 'ALL');
   const [selectedPriority, setSelectedPriority] = useState<string>('ALL');
 
   // Pagination State (Requirement 03)
@@ -87,10 +94,12 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
   const [isConfigWeightsOpen, setIsConfigWeightsOpen] = useState(false);
   const [tempWeights, setTempWeights] = useState<PovertyScoringWeights>(povertyWeights);
 
+  const effectiveDivisionFilter = isGnLocked ? lockedDiv : selectedDivision;
+
   // Filtered dataset
   const filteredHouseholds = useMemo(() => {
     return households.filter((h) => {
-      if (selectedDivision !== 'ALL' && h.divisionCode !== selectedDivision) return false;
+      if (effectiveDivisionFilter !== 'ALL' && (h.divisionCode || '').trim().toUpperCase() !== effectiveDivisionFilter.trim().toUpperCase()) return false;
       if (selectedPriority !== 'ALL' && String(h.priorityRank) !== selectedPriority) return false;
 
       if (searchQuery.trim()) {
@@ -106,7 +115,7 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
       }
       return true;
     });
-  }, [households, selectedDivision, selectedPriority, searchQuery]);
+  }, [households, effectiveDivisionFilter, selectedPriority, searchQuery]);
 
   // Paginated dataset (Requirement 03)
   const totalPages = pageSize === 'ALL' ? 1 : Math.max(1, Math.ceil(filteredHouseholds.length / pageSize));
@@ -292,6 +301,18 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
             </button>
           )}
 
+          {onOpenMobileFieldApp && (
+            <button
+              type="button"
+              onClick={onOpenMobileFieldApp}
+              className="px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-extrabold flex items-center gap-1.5 transition-colors shadow-xs"
+              title={lang === 'ta' ? 'ஆஃப்லைன் மொபைல் குடும்பப் பதிவு ஆப் பயன்முறைக்கு மாறு' : 'Open Offline Mobile Field App'}
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>{lang === 'ta' ? 'மொபைல் ஆப் (Offline)' : 'Mobile Field App'}</span>
+            </button>
+          )}
+
           {canEdit && (
             <button
               type="button"
@@ -368,14 +389,17 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
           {/* Division Filter */}
           <div>
             <select
-              value={selectedDivision}
+              value={effectiveDivisionFilter}
+              disabled={isGnLocked}
               onChange={(e) => {
-                setSelectedDivision(e.target.value);
-                setCurrentPage(1);
+                if (!isGnLocked) {
+                  setSelectedDivision(e.target.value);
+                  setCurrentPage(1);
+                }
               }}
-              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white disabled:bg-slate-100 disabled:font-bold focus:outline-none focus:ring-2 focus:ring-emerald-600"
             >
-              <option value="ALL">🗺️ {t.allDivisions}</option>
+              {!isGnLocked && <option value="ALL">🗺️ {t.allDivisions}</option>}
               {divisions.map((d) => (
                 <option key={d.code} value={d.code}>
                   {d.code} - {d.nameTa}
@@ -935,6 +959,7 @@ export const FamilyDataCenterView: React.FC<FamilyDataCenterViewProps> = ({
         povertyWeights={povertyWeights}
         canEdit={canEdit}
         isSuperAdmin={isSuperAdmin}
+        lockedDivisionCode={isGnLocked ? lockedDiv : undefined}
         onClose={() => {
           setDossierWindowOpen(false);
           setDossierEditingHousehold(null);

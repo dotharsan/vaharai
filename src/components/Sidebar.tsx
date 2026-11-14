@@ -31,6 +31,7 @@ import {
   Home,
   Accessibility,
   Layers,
+  MapPin,
 } from 'lucide-react';
 import { DriveSyncStatus, isDriveAutoSyncEnabled } from '../services/googleDrive';
 import { getDsDivisionForUser, getDsDivisionById } from '../services/storage';
@@ -315,6 +316,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             subtitle: lang === 'ta' ? 'அலுவலர் கணக்குகள்' : 'Staff Accounts & Roles',
             icon: ShieldCheck,
             badge: lang === 'ta' ? 'நிர்வாகம்' : 'Admin',
+          },
+        ]
+      : []),
+    ...(isSuperAdmin
+      ? [
+          {
+            id: 'field-map',
+            title: lang === 'ta' ? 'கள அலுவலர் நேரடி வரைபடம்' : 'Installed Devices Live Map',
+            subtitle: lang === 'ta' ? 'ஆப் நிறுவியோர் GPS இருப்பிடம்' : 'Installed App GPS Map',
+            icon: MapPin,
+            badge: lang === 'ta' ? 'நேரலை Map' : 'Live Map',
           },
         ]
       : []),

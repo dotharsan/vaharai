@@ -14,13 +14,17 @@ import {
   Sparkles,
   ChevronRight,
   Layers,
+  Smartphone,
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface LoginViewProps {
   users: User[];
   lang: Language;
   setLang: (lang: Language) => void;
   onLoginSuccess: (user: User) => void;
+  mobileFieldPreferred?: boolean;
+  onToggleMobileFieldPreferred?: (next: boolean) => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -28,6 +32,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   lang,
   setLang,
   onLoginSuccess,
+  mobileFieldPreferred = false,
+  onToggleMobileFieldPreferred,
 }) => {
   const t = translations[lang];
 
@@ -124,8 +130,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
       {/* Background Grid Pattern */}
       <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:16px_16px] opacity-40"></div>
 
-      {/* Language Switcher Top Right */}
+      {/* Language Switcher & PWA Install Top Right */}
       <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+        <PWAInstallButton lang={lang} compact />
         <button
           onClick={() => setLang(lang === 'ta' ? 'en' : 'ta')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-white text-xs border border-slate-700 transition-colors shadow-sm cursor-pointer"
@@ -220,6 +227,25 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <span>{lang === 'ta' ? 'அதிகாரபூர்வ உள்நுழைவு' : 'Sign In to Portal'}</span>
             </button>
           </form>
+
+          {onToggleMobileFieldPreferred && (
+            <label className="mt-3 p-3 rounded-xl border border-teal-200 bg-teal-50/70 flex items-center justify-between gap-2 cursor-pointer text-xs">
+              <div className="flex items-center gap-2 text-teal-950 font-bold">
+                <Smartphone className="w-4 h-4 text-teal-700 shrink-0" />
+                <span>
+                  {lang === 'ta'
+                    ? 'கிராம உத்தியோகத்தர் மொபைல் ஆப் பயன்முறையில் திற (GN Field App)'
+                    : 'Launch in Grama Niladhari Offline Mobile App mode'}
+                </span>
+              </div>
+              <input
+                type="checkbox"
+                checked={mobileFieldPreferred}
+                onChange={(e) => onToggleMobileFieldPreferred(e.target.checked)}
+                className="rounded text-teal-700 shrink-0"
+              />
+            </label>
+          )}
 
           {/* Official Security Notice */}
           <div className="mt-5 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600">

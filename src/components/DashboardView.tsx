@@ -14,7 +14,7 @@ import { Language, translations } from '../translations/i18n';
 import { calculateAge, getDsDivisionById, logAuditAction } from '../services/storage';
 import { VaharaiLogo } from './VaharaiLogo';
 import { LogoSettingsModal } from './LogoSettingsModal';
-import { ImagePlus } from 'lucide-react';
+import { ImagePlus, MapPin } from 'lucide-react';
 
 interface DashboardViewProps {
   beneficiaries: Beneficiary[];
@@ -172,7 +172,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {(isSuperAdmin || isDistrictAdmin) && (
-            <div className="shrink-0 self-start md:self-center">
+            <div className="shrink-0 self-start md:self-center flex items-center gap-2 flex-wrap">
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('field-map')}
+                  className="px-3.5 py-2 bg-emerald-950/90 hover:bg-slate-950 text-emerald-100 border border-emerald-500/60 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-colors cursor-pointer"
+                  title={lang === 'ta' ? 'ஆப் நிறுவப்பட்ட தொலைபேசிகளின் நேரடி GPS வரைபடம்' : 'View live GPS locations of installed mobile apps'}
+                >
+                  <MapPin className="w-4 h-4 text-amber-400" />
+                  <span>{lang === 'ta' ? 'அலுவலர் நேரடி வரைபடம்' : 'Live Officers Map'}</span>
+                </button>
+              )}
               <button
                 onClick={() => setShowLogoModal(true)}
                 className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-colors cursor-pointer"

@@ -12,9 +12,11 @@ import {
   Building2,
   ArrowLeft,
   ArrowRight,
+  Smartphone,
 } from 'lucide-react';
 import { DriveSyncStatus } from '../services/googleDrive';
 import { getDsDivisionById } from '../services/storage';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -38,6 +40,7 @@ interface HeaderProps {
   canGoForward?: boolean;
   onGoBack?: () => void;
   onGoForward?: () => void;
+  onOpenMobileFieldApp?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -62,6 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
   canGoForward = false,
   onGoBack,
   onGoForward,
+  onOpenMobileFieldApp,
 }) => {
   const t = translations[lang];
   const isNormal = currentUser?.role === 'NORMAL';
@@ -121,6 +125,8 @@ export const Header: React.FC<HeaderProps> = ({
         return t.navServices;
       case 'universal-search':
         return lang === 'ta' ? 'அகில பொதுமக்கள் தேடல்' : 'Universal Citizen Search';
+      case 'field-map':
+        return lang === 'ta' ? 'கள அலுவலர் நேரடி வரைபடம்' : 'Installed Devices Live Map';
       default:
         return tab;
     }
@@ -268,10 +274,23 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Right Zone: Quick Barcode Action, Profile & Logout */}
+        {/* Right Zone: Quick Barcode Action, Mobile App, Install PWA, Profile & Logout */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <PWAInstallButton lang={lang} compact />
           {currentUser ? (
             <>
+              {onOpenMobileFieldApp && !isNormal && (
+                <button
+                  type="button"
+                  onClick={onOpenMobileFieldApp}
+                  className="flex items-center gap-1 px-2.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-950 border border-teal-300 rounded-lg text-xs font-extrabold transition-colors"
+                  title={lang === 'ta' ? 'குடும்பப் பதிவு ஆஃப்லைன் மொபைல் ஆப் பயன்முறை' : 'Switch to Offline Mobile Field App'}
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-teal-700" />
+                  <span className="hidden lg:inline">{lang === 'ta' ? 'மொபைல் ஆப்' : 'Field App'}</span>
+                </button>
+              )}
+
               {/* Office Layout Blueprint trigger */}
               {onOpenOfficeLayout && !isNormal && (
                 <button
