@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
+  Beneficiary,
   PregnantMotherRecord,
   MonthlyStampCollection,
   GNDivision,
@@ -8,6 +9,8 @@ import {
   WelfareScheme,
   FAMILY_RELATIONSHIP_OPTIONS,
   ALL_WELFARE_SCHEMES_LIST,
+  isPregnantMotherActive,
+  normDivCode,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { parseSriLankanNic } from '../utils/nicParser';
@@ -51,6 +54,7 @@ import {
 
 interface PregnantMothersViewProps {
   pregnantMothers: PregnantMotherRecord[];
+  beneficiaries?: Beneficiary[];
   divisions: GNDivision[];
   currentUser: User;
   lang: Language;
@@ -60,6 +64,7 @@ interface PregnantMothersViewProps {
 
 export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
   pregnantMothers,
+  beneficiaries,
   divisions,
   currentUser,
   lang,
@@ -80,17 +85,21 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
   const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
 
+  const activeMothersPool = useMemo(() => {
+    return pregnantMothers.filter((m) => isPregnantMotherActive(m, beneficiaries));
+  }, [pregnantMothers, beneficiaries]);
+
   // District HQ direct records
   const districtHqMothers = useMemo(() => {
-    return pregnantMothers.filter(
+    return activeMothersPool.filter(
       (m) => m.dsDivisionId === 'DISTRICT_HQ' || m.dsDivisionId === 'DISTRICT'
     );
-  }, [pregnantMothers]);
+  }, [activeMothersPool]);
 
   // 14 DS Maternity Summary Breakdown
   const dsPregnantSummaryList = useMemo(() => {
     return dsDivisionsList.map((ds) => {
-      const dsList = pregnantMothers.filter(
+      const dsList = activeMothersPool.filter(
         (m) => (m.dsDivisionId || 'DS_VAHARAI') === ds.id
       );
       const total = dsList.length;
@@ -466,7 +475,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
   // Filtered dataset
   const filteredMothers = useMemo(() => {
-    return pregnantMothers.filter((m) => {
+    return activeMothersPool.filter((m) => {
       // District Admin filter
       if (isDistrictAdmin) {
         if (districtSubView === 'district_hq') {
@@ -477,8 +486,8 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
       }
 
       // 1. Division
-      if (isGramaNiladhari && m.divisionCode !== officerDivision) return false;
-      if (!isGramaNiladhari && !isDistrictAdmin && selectedDivision !== 'ALL' && m.divisionCode !== selectedDivision) return false;
+      if (isGramaNiladhari && normDivCode(m.divisionCode) !== normDivCode(officerDivision)) return false;
+      if (!isGramaNiladhari && !isDistrictAdmin && selectedDivision !== 'ALL' && normDivCode(m.divisionCode) !== normDivCode(selectedDivision)) return false;
 
       // 2. Working View Tab
       if (activeTab === 'WAITING' && (m.status !== 'WAITING_STAMP' || m.isCompleted)) return false;
@@ -498,7 +507,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
 
       return true;
     });
-  }, [pregnantMothers, isDistrictAdmin, districtSubView, selectedDsFilter, isGramaNiladhari, officerDivision, selectedDivision, activeTab, searchQuery]);
+  }, [activeMothersPool, isDistrictAdmin, districtSubView, selectedDsFilter, isGramaNiladhari, officerDivision, selectedDivision, activeTab, searchQuery]);
 
   // Overall counts for tabs
   const tabCounts = useMemo(() => {
@@ -506,8 +515,8 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     let active = 0;
     let completed = 0;
 
-    pregnantMothers.forEach((m) => {
-      if (isGramaNiladhari && m.divisionCode !== officerDivision) return;
+    activeMothersPool.forEach((m) => {
+      if (isGramaNiladhari && normDivCode(m.divisionCode) !== normDivCode(officerDivision)) return;
       if (isDistrictAdmin && districtSubView === 'district_hq' && m.dsDivisionId !== 'DISTRICT_HQ' && m.dsDivisionId !== 'DISTRICT') return;
       if (m.isCompleted || m.status === 'COMPLETED') {
         completed++;
@@ -519,7 +528,7 @@ export const PregnantMothersView: React.FC<PregnantMothersViewProps> = ({
     });
 
     return { waiting, active, completed };
-  }, [pregnantMothers, isGramaNiladhari, officerDivision, isDistrictAdmin, districtSubView]);
+  }, [activeMothersPool, isGramaNiladhari, officerDivision, isDistrictAdmin, districtSubView]);
 
   // Export CSV
   const handleExportCsv = () => {

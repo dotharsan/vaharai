@@ -9,6 +9,9 @@ import {
   PovertyScoringWeights,
   FamilyRelationship,
   ChronicIllness,
+  CitizenStatus,
+  FamilyResidencyStatus,
+  TransferScope,
   calculateFamilyPovertyScore,
   computeMembersAtAGlance,
   computeAgeFromDobSafe,
@@ -61,6 +64,13 @@ export interface MemberDraft {
   isDependent: boolean;
   chronicIllness: ChronicIllness;
   economicActivity: string;
+  status: CitizenStatus;
+  transferScope?: TransferScope;
+  transferDestination?: string;
+  transferDate?: string;
+  deathDate?: string;
+  deathCertificateNo?: string;
+  deathRemarks?: string;
   existingBeneficiary?: Beneficiary;
 }
 
@@ -79,6 +89,7 @@ interface OfficialFamilyDossierWindowProps {
   canEdit: boolean;
   isSuperAdmin?: boolean;
   lockedDivisionCode?: string;
+  currentUserName?: string;
   onClose: () => void;
   onSaveFamily: (payload: {
     household: HouseholdData;
@@ -186,6 +197,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   canEdit,
   isSuperAdmin = false,
   lockedDivisionCode,
+  currentUserName,
   onClose,
   onSaveFamily,
 }) => {
@@ -193,6 +205,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   const [activeTab, setActiveTab] = useState<DossierWindowTab>(initialTab);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [showDetailedIncomeExpense, setShowDetailedIncomeExpense] = useState(false);
+  const [formError, setFormError] = useState<string>('');
 
   const effectiveLockedDiv =
     lockedDivisionCode && lockedDivisionCode.trim().toUpperCase() !== 'ALL'
@@ -211,6 +224,9 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
     address: '',
     divisionCode: defaultDiv,
     status: 'DS_ENDORSED' as HouseholdData['status'],
+    residencyStatus: 'PERMANENT' as FamilyResidencyStatus,
+    transferDestination: '',
+    transferDate: '',
     selectedCategory: 'VULNERABLE' as HouseholdData['selectedCategory'],
     bankName: 'Peoples Bank',
     bankBranch: 'Valaichchenai',
@@ -225,6 +241,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   useEffect(() => {
     if (!isOpen) return;
     setActiveTab(initialTab);
+    setFormError('');
 
     if (editingHousehold) {
       const famKey = (editingHousehold.familyCode || editingHousehold.familyQrPayload || '').trim().toUpperCase();
@@ -245,6 +262,9 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         address: editingHousehold.address || '',
         divisionCode: effectiveLockedDiv || editingHousehold.divisionCode || defaultDiv,
         status: editingHousehold.status || 'DS_ENDORSED',
+        residencyStatus: editingHousehold.residencyStatus || 'PERMANENT',
+        transferDestination: editingHousehold.transferDestination || '',
+        transferDate: editingHousehold.transferDate || new Date().toISOString().slice(0, 10),
         selectedCategory: editingHousehold.selectedCategory || 'VULNERABLE',
         bankName: editingHousehold.bankDetails?.bankName || 'Peoples Bank',
         bankBranch: editingHousehold.bankDetails?.branch || 'Valaichchenai',
@@ -319,6 +339,13 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
           isDependent: b.isDependent !== undefined ? b.isDependent : age < 18 || age >= 70,
           chronicIllness: b.chronicIllness || 'NONE',
           economicActivity: b.economicActivity || '',
+          status: b.status || 'ACTIVE',
+          transferScope: b.transferScope || 'INTERNAL_GN',
+          transferDestination: b.transferDestination || b.transferredToDivision || '',
+          transferDate: b.transferDate || b.transferredDate || new Date().toISOString().slice(0, 10),
+          deathDate: b.deathDate || b.deceasedDate || new Date().toISOString().slice(0, 10),
+          deathCertificateNo: b.deathCertificateNo || '',
+          deathRemarks: b.deathRemarks || '',
           existingBeneficiary: b,
         };
       });
@@ -341,6 +368,13 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
           isDependent: false,
           chronicIllness: 'NONE',
           economicActivity: 'கூலி வேலை (Daily Wage)',
+          status: 'ACTIVE',
+          transferScope: 'INTERNAL_GN',
+          transferDestination: '',
+          transferDate: new Date().toISOString().slice(0, 10),
+          deathDate: new Date().toISOString().slice(0, 10),
+          deathCertificateNo: '',
+          deathRemarks: '',
         });
       }
 
@@ -360,6 +394,9 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         address: '',
         divisionCode: defaultDiv,
         status: 'DS_ENDORSED',
+        residencyStatus: 'PERMANENT',
+        transferDestination: '',
+        transferDate: new Date().toISOString().slice(0, 10),
         selectedCategory: 'VULNERABLE',
         bankName: 'Peoples Bank',
         bankBranch: 'Valaichchenai',
@@ -384,6 +421,13 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
           isDependent: false,
           chronicIllness: 'NONE',
           economicActivity: 'கூலி வேலை (Daily Wage)',
+          status: 'ACTIVE',
+          transferScope: 'INTERNAL_GN',
+          transferDestination: '',
+          transferDate: new Date().toISOString().slice(0, 10),
+          deathDate: new Date().toISOString().slice(0, 10),
+          deathCertificateNo: '',
+          deathRemarks: '',
         },
       ]);
       setInitialMemberIds([]);
@@ -421,6 +465,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         isDependent: m.isDependent,
         chronicIllness: m.hasCkdu ? 'CKD_KIDNEY' : m.chronicIllness,
         economicActivity: m.economicActivity,
+        status: m.status || 'ACTIVE',
       };
     });
   }, [members, meta.applicantNameTa, meta.applicantNic]);
@@ -473,6 +518,13 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
       isDependent: true,
       chronicIllness: 'NONE',
       economicActivity: 'மாணவர் (Student)',
+      status: 'ACTIVE',
+      transferScope: 'INTERNAL_GN',
+      transferDestination: '',
+      transferDate: new Date().toISOString().slice(0, 10),
+      deathDate: new Date().toISOString().slice(0, 10),
+      deathCertificateNo: '',
+      deathRemarks: '',
     }));
     setMembers((prev) => [...prev, ...newRows]);
   };
@@ -502,10 +554,57 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
   };
 
   const handleSave = () => {
+    setFormError('');
     if (!meta.applicantNameTa.trim() || !meta.applicantNic.trim()) {
-      alert(isTa ? 'தயவுசெய்து குடும்பத் தலைவரின் பெயர் மற்றும் NIC இலக்கத்தை உள்ளிடவும்.' : 'Please enter Head of Household Name and NIC.');
+      setFormError(isTa ? 'தயவுசெய்து குடும்பத் தலைவரின் பெயர் மற்றும் NIC இலக்கத்தை உள்ளிடவும்.' : 'Please enter Head of Household Name and NIC.');
       setActiveTab('family-entry');
       return;
+    }
+
+    if (meta.residencyStatus !== 'PERMANENT') {
+      if (!meta.transferDestination.trim()) {
+        setFormError(
+          isTa
+            ? 'குடும்பம் மாற்றப்பட்ட இடம் ("எங்கு?") கட்டாயமாக உள்ளிடப்பட வேண்டும்.'
+            : 'Transfer destination ("Where?") is required for a transferred family.'
+        );
+        setActiveTab('family-entry');
+        return;
+      }
+      if (!meta.transferDate.trim()) {
+        setFormError(
+          isTa
+            ? 'மொத்த எண்ணிக்கையிலிருந்து கழிக்கப்படும் திகதி (Deduction Date) கட்டாயமாக உள்ளிடப்பட வேண்டும்.'
+            : 'Deduction / transfer date is mandatory.'
+        );
+        setActiveTab('family-entry');
+        return;
+      }
+    }
+
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      const memberLabel = (i === 0 && !m.nameTa.trim() ? meta.applicantNameTa : m.nameTa).trim() || `#${i + 1}`;
+      if (m.status === 'TRANSFERRED') {
+        if (!m.transferDestination?.trim() || !m.transferDate?.trim()) {
+          setFormError(
+            isTa
+              ? `உறுப்பினர் "${memberLabel}": மாற்றப்பட்ட இடம் ("எங்கு?") மற்றும் கழிக்கப்படும் திகதி கட்டாயமாகும்.`
+              : `Member "${memberLabel}": Transfer destination and date are required.`
+          );
+          setActiveTab('members');
+          return;
+        }
+      }
+      if (m.status === 'DECEASED' && !m.deathDate?.trim()) {
+        setFormError(
+          isTa
+            ? `உறுப்பினர் "${memberLabel}": மரணமடைந்த / கழிக்கப்படும் திகதி கட்டாயமாகும்.`
+            : `Member "${memberLabel}": Death / deduction date is required.`
+        );
+        setActiveTab('members');
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -535,6 +634,9 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
 
       const existing = m.existingBeneficiary;
       const memberId = m.id || `VHR-${divCode}-2026-${String(existingBeneficiaries.length + idx + 1).padStart(4, '0')}`;
+      const memberStatus: CitizenStatus = m.status || 'ACTIVE';
+      const memberTransferScope: TransferScope | undefined =
+        memberStatus === 'TRANSFERRED' ? m.transferScope || 'INTERNAL_GN' : undefined;
 
       return {
         ...(existing || {}),
@@ -553,7 +655,18 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         householdNo: meta.householdReference,
         familyCode,
         familyRelationship: m.rel,
-        status: existing?.status || 'ACTIVE',
+        status: memberStatus,
+        deathDate: memberStatus === 'DECEASED' ? m.deathDate : undefined,
+        deceasedDate: memberStatus === 'DECEASED' ? m.deathDate : undefined,
+        deathCertificateNo: memberStatus === 'DECEASED' ? m.deathCertificateNo?.trim() : undefined,
+        deathRemarks: memberStatus === 'DECEASED' ? m.deathRemarks?.trim() : undefined,
+        transferScope: memberTransferScope,
+        transferDestination: memberStatus === 'TRANSFERRED' ? m.transferDestination?.trim() : undefined,
+        transferredToDivision: memberStatus === 'TRANSFERRED' ? m.transferDestination?.trim() : undefined,
+        transferDate: memberStatus === 'TRANSFERRED' ? m.transferDate : undefined,
+        transferredDate: memberStatus === 'TRANSFERRED' ? m.transferDate : undefined,
+        previousDivisionCode:
+          memberStatus === 'TRANSFERRED' ? existing?.previousDivisionCode || divCode : existing?.previousDivisionCode,
         isPregnantMother: m.isPregnant,
         isPersonWithDisability: m.isDisability,
         disabilityNature: m.disabilityNature || existing?.disabilityNature,
@@ -579,8 +692,16 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
 
     const keptIds = new Set(savedMembers.map((m) => m.id));
     const removedMemberIds = initialMemberIds.filter((id) => !keptIds.has(id));
+    const activeMembersCount = savedMembers.filter((m) => !m.status || m.status === 'ACTIVE').length;
 
     const scoreResult = calculateFamilyPovertyScore(assets, savedMembers, povertyWeights);
+    const isFamTransferred = meta.residencyStatus !== 'PERMANENT';
+    const famTransferScope: TransferScope | undefined =
+      meta.residencyStatus === 'TRANSFERRED_GN'
+        ? 'INTERNAL_GN'
+        : meta.residencyStatus === 'TRANSFERRED_EXTERNAL_DS'
+        ? 'EXTERNAL_DS'
+        : undefined;
 
     const household: HouseholdData = {
       id: editingHousehold?.id || meta.householdReference || `HH-${familyCode}`,
@@ -595,6 +716,15 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
       divisionCode: divCode,
       dsDivisionId: editingHousehold?.dsDivisionId,
       status: meta.status,
+      residencyStatus: meta.residencyStatus,
+      transferScope: famTransferScope,
+      transferDestination: isFamTransferred ? meta.transferDestination.trim() : undefined,
+      transferDate: isFamTransferred ? meta.transferDate.trim() : undefined,
+      previousDivisionCode: isFamTransferred ? editingHousehold?.previousDivisionCode || divCode : editingHousehold?.previousDivisionCode,
+      transferRequestedBy: isFamTransferred ? editingHousehold?.transferRequestedBy || currentUserName || 'GN Officer' : undefined,
+      transferRequestedAt: isFamTransferred ? editingHousehold?.transferRequestedAt || now : undefined,
+      transferApprovedBy: !isFamTransferred ? editingHousehold?.transferApprovedBy : undefined,
+      transferApprovedAt: !isFamTransferred ? editingHousehold?.transferApprovedAt : undefined,
       selectedCategory: meta.selectedCategory,
       bankDetails: {
         bankName: meta.bankName,
@@ -604,7 +734,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
         status: meta.bankAccountNo ? 'VERIFIED' : 'PENDING',
       },
       commonAssets: assets,
-      totalMembersCount: savedMembers.length,
+      totalMembersCount: activeMembersCount,
       familyQrPayload,
       score100: scoreResult.score100,
       priorityRank: scoreResult.priorityRank,
@@ -865,6 +995,15 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
 
       {/* Main Scrollable Workspace */}
       <div className="official-dossier-scroll flex-1 overflow-y-auto p-3 sm:p-6">
+        {formError && (
+          <div className="max-w-6xl mx-auto mb-4 p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-bold flex items-center justify-between gap-2 no-print">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{formError}</span>
+            </div>
+            <button type="button" onClick={() => setFormError('')} className="text-rose-700 hover:text-rose-950 font-black px-2">✕</button>
+          </div>
+        )}
         {/* ================= TAB 1: FAMILY INFO, ASSETS, HOUSING, SANITATION, ECONOMIC ================= */}
         {activeTab === 'family-entry' && (
           <div className="dossier-nonprint-tab max-w-6xl mx-auto space-y-5">
@@ -1087,6 +1226,115 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                     />
                   </label>
                 </div>
+              </div>
+
+              {/* Family Residency & Transfer Status (நிரந்தர வதிவு / GN மாற்றம் / வெளி பிரதேச செயலக மாற்றம்) */}
+              <div className={`p-3.5 rounded-xl border space-y-3 text-xs ${
+                meta.residencyStatus === 'PERMANENT'
+                  ? 'bg-emerald-50/50 border-emerald-200'
+                  : meta.residencyStatus === 'TRANSFERRED_GN'
+                  ? 'bg-amber-50/80 border-amber-300'
+                  : 'bg-purple-50/80 border-purple-300'
+              }`}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <label className="font-black text-slate-900 block">
+                      {isTa
+                        ? 'குடும்ப வதிவிட நிலை & பிரிவு மாற்றம் (Family Residency & Transfer Status)'
+                        : 'Family Residency & Transfer Status'}
+                    </label>
+                    <span className="text-[11px] text-slate-600">
+                      {isTa
+                        ? 'குடும்பம் இடமாற்றம் செய்யப்பட்டால் மொத்த எண்ணிக்கையிலிருந்து கழிக்கப்பட்டு சுப்பர் அட்மின் பரிசீலனைக்கு அனுப்பப்படும்.'
+                        : 'Transferred families are deducted from active totals and routed for Super Admin approval.'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {[
+                    {
+                      id: 'PERMANENT' as FamilyResidencyStatus,
+                      ta: 'நிரந்தர வதிவு',
+                      en: 'Permanent Resident',
+                      activeCls: 'bg-emerald-800 text-white border-emerald-900',
+                    },
+                    {
+                      id: 'TRANSFERRED_GN' as FamilyResidencyStatus,
+                      ta: 'கிராம உத்தியோகத்தர் பிரிவு மாற்றம்',
+                      en: 'GN Division Transfer (Our DS)',
+                      activeCls: 'bg-amber-700 text-white border-amber-800',
+                    },
+                    {
+                      id: 'TRANSFERRED_EXTERNAL_DS' as FamilyResidencyStatus,
+                      ta: 'வெளி பிரதேச செயலாளர் பிரிவு மாற்றம்',
+                      en: 'External DS Division Transfer',
+                      activeCls: 'bg-purple-800 text-white border-purple-900',
+                    },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() =>
+                        setMeta((prev) => ({
+                          ...prev,
+                          residencyStatus: opt.id,
+                          transferDate: prev.transferDate || new Date().toISOString().slice(0, 10),
+                        }))
+                      }
+                      className={`px-3 py-2 rounded-lg border font-bold text-left transition-all ${
+                        meta.residencyStatus === opt.id
+                          ? `${opt.activeCls} shadow-xs`
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      {isTa ? opt.ta : opt.en}
+                    </button>
+                  ))}
+                </div>
+
+                {meta.residencyStatus !== 'PERMANENT' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="block font-bold text-slate-900 mb-1">
+                        {meta.residencyStatus === 'TRANSFERRED_GN'
+                          ? (isTa ? 'எங்கு மாற்றப்பட்டது? (புதிய கிராம உத்தியோகத்தர் பிரிவு / கிராமம்) *' : 'Where Transferred? (Target GN Division / Village) *')
+                          : (isTa ? 'எங்கு மாற்றப்பட்டது? (வெளி பிரதேச செயலாளர் பிரிவு / மாவட்டம்) *' : 'Where Transferred? (External DS Division / District) *')}
+                      </label>
+                      <input
+                        type="text"
+                        value={meta.transferDestination}
+                        onChange={(e) => setMeta({ ...meta, transferDestination: e.target.value })}
+                        placeholder={
+                          meta.residencyStatus === 'TRANSFERRED_GN'
+                            ? 'உ-ம்: 212A வாகரை வடக்கு / கதிரவெளி'
+                            : 'உ-ம்: கோறளைப்பற்று மத்தி / மட்டக்களப்பு'
+                        }
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold text-slate-900 mb-1">
+                        {isTa ? 'கழிக்கப்படும் / மாற்றப்பட்ட திகதி (Deduction Date) *' : 'Deduction / Transfer Date *'}
+                      </label>
+                      <input
+                        type="date"
+                        value={meta.transferDate}
+                        onChange={(e) => setMeta({ ...meta, transferDate: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white font-mono font-bold"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 p-2.5 rounded-lg bg-white/90 border border-amber-300 text-[11px] font-semibold text-slate-800">
+                      {meta.residencyStatus === 'TRANSFERRED_GN'
+                        ? (isTa
+                            ? 'ℹ️ இக்குடும்பம் சேமிக்கப்பட்டவுடன் மொத்த எண்ணிக்கையிலிருந்து கழிக்கப்படும். பின்னர் சுப்பர் அட்மின் அனுமதியளித்து புதிய கிராம உத்தியோகத்தர் பிரிவிற்கு மாற்றும்போது அங்கு பதிவைத் தொடரலாம்.'
+                            : 'ℹ️ Once saved, this family will be deducted from active counts. Super Admin can then approve and reassign it to the target GN division.')
+                        : (isTa
+                            ? 'ℹ️ வெளி பிரதேச செயலாளர் பிரிவிற்கு மாற்றப்படுவதால் மொத்த எண்ணிக்கையிலிருந்து கழிக்கப்பட்டு சுப்பர் அட்மினின் தனியான பகுதியில் கழிக்கப்பட்ட திகதியுடன் காண்பிக்கப்படும்.'
+                            : 'ℹ️ Deducted from DS active counts and listed in the dedicated Super Admin External DS Transfers registry with the mandatory deduction date.')}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1905,18 +2153,32 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                 const age = computeAgeFromDobSafe(m.dob);
                 const isSchoolAge5To16 = age >= 5 && age <= 16;
                 const isOver70 = age >= 70;
+                const isDeceased = m.status === 'DECEASED';
+                const isTransferred = m.status === 'TRANSFERRED';
 
                 return (
                   <div
                     key={idx}
                     className={`bg-white border rounded-2xl p-4 shadow-xs space-y-3 ${
-                      idx === 0 ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-slate-200'
+                      isDeceased
+                        ? 'border-slate-400 bg-slate-50/70'
+                        : isTransferred
+                        ? 'border-purple-300 bg-purple-50/30'
+                        : idx === 0
+                        ? 'border-emerald-400 ring-1 ring-emerald-200'
+                        : 'border-slate-200'
                     }`}
                   >
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2 flex-wrap gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`px-2.5 py-0.5 rounded-lg text-xs font-black ${
-                          idx === 0 ? 'bg-emerald-800 text-white' : 'bg-slate-800 text-white'
+                          isDeceased
+                            ? 'bg-slate-900 text-white'
+                            : isTransferred
+                            ? 'bg-purple-800 text-white'
+                            : idx === 0
+                            ? 'bg-emerald-800 text-white'
+                            : 'bg-slate-800 text-white'
                         }`}>
                           #{idx + 1} {idx === 0 ? (isTa ? 'குடும்பத் தலைவர் (Head)' : 'Head') : m.rel}
                         </span>
@@ -1926,6 +2188,16 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         <span className="font-mono text-[11px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                           {age} {isTa ? 'வயது' : 'yrs'}
                         </span>
+                        {isDeceased && (
+                          <span className="text-[10px] font-black bg-slate-900 text-white px-2 py-0.5 rounded-full">
+                            மரணம் (கழிக்கப்பட்டது{m.deathDate ? `: ${m.deathDate}` : ''})
+                          </span>
+                        )}
+                        {isTransferred && (
+                          <span className="text-[10px] font-black bg-purple-800 text-white px-2 py-0.5 rounded-full">
+                            {m.transferScope === 'EXTERNAL_DS' ? 'வெளி DS மாற்றம்' : 'GN மாற்றம்'} (கழிக்கப்பட்டது{m.transferDate ? `: ${m.transferDate}` : ''})
+                          </span>
+                        )}
                         {isOver70 && (
                           <span className="text-[10px] font-black bg-teal-100 text-teal-900 px-2 py-0.5 rounded-full border border-teal-300">
                             70+ {isTa ? 'முதியோர்' : 'Over 70'}
@@ -2197,6 +2469,154 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         <span>Pregnant (கர்ப்பிணித் தாய்)</span>
                       </label>
                     </div>
+
+                    {/* Individual Member Lifecycle Status: நிரந்தர வதிவு / கிராம உத்தியோகத்தர் மாற்றம் / வெளி DS மாற்றம் / மரணம் */}
+                    <div className={`p-3 rounded-xl border text-xs space-y-2.5 ${
+                      isDeceased
+                        ? 'bg-slate-100 border-slate-300'
+                        : isTransferred
+                        ? 'bg-purple-50/70 border-purple-200'
+                        : 'bg-emerald-50/40 border-emerald-200'
+                    }`}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="font-black text-slate-800">
+                          {isTa ? 'தனிநபர் நிலை (Individual Status):' : 'Member Lifecycle Status:'}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { key: 'PERMANENT', labelTa: 'நிரந்தர வதிவு', labelEn: 'Permanent', cls: 'bg-emerald-700 text-white border-emerald-800' },
+                            { key: 'GN_TRANSFER', labelTa: 'கிராம உத்தியோகத்தர் மாற்றம்', labelEn: 'GN Transfer', cls: 'bg-amber-700 text-white border-amber-800' },
+                            { key: 'EXT_TRANSFER', labelTa: 'வெளி பிரதேச செயலக மாற்றம்', labelEn: 'External DS Transfer', cls: 'bg-purple-800 text-white border-purple-900' },
+                            { key: 'DECEASED', labelTa: 'மரணம்', labelEn: 'Deceased', cls: 'bg-slate-900 text-white border-slate-950' },
+                          ].map((opt) => {
+                            const isSelected =
+                              (opt.key === 'PERMANENT' && m.status === 'ACTIVE') ||
+                              (opt.key === 'GN_TRANSFER' && m.status === 'TRANSFERRED' && m.transferScope !== 'EXTERNAL_DS') ||
+                              (opt.key === 'EXT_TRANSFER' && m.status === 'TRANSFERRED' && m.transferScope === 'EXTERNAL_DS') ||
+                              (opt.key === 'DECEASED' && m.status === 'DECEASED');
+                            return (
+                              <button
+                                key={opt.key}
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...members];
+                                  if (opt.key === 'PERMANENT') {
+                                    updated[idx].status = 'ACTIVE';
+                                  } else if (opt.key === 'GN_TRANSFER') {
+                                    updated[idx].status = 'TRANSFERRED';
+                                    updated[idx].transferScope = 'INTERNAL_GN';
+                                    updated[idx].transferDate = updated[idx].transferDate || new Date().toISOString().slice(0, 10);
+                                  } else if (opt.key === 'EXT_TRANSFER') {
+                                    updated[idx].status = 'TRANSFERRED';
+                                    updated[idx].transferScope = 'EXTERNAL_DS';
+                                    updated[idx].transferDate = updated[idx].transferDate || new Date().toISOString().slice(0, 10);
+                                  } else {
+                                    updated[idx].status = 'DECEASED';
+                                    updated[idx].deathDate = updated[idx].deathDate || new Date().toISOString().slice(0, 10);
+                                  }
+                                  setMembers(updated);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-all ${
+                                  isSelected ? `${opt.cls} shadow-xs` : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                {isTa ? opt.labelTa : opt.labelEn}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {isTransferred && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-800 mb-0.5">
+                              {m.transferScope === 'EXTERNAL_DS'
+                                ? (isTa ? 'எங்கு மாற்றப்பட்டது? (வெளி பிரதேச செயலாளர் பிரிவு) *' : 'Where? (External DS Division) *')
+                                : (isTa ? 'எங்கு மாற்றப்பட்டது? (கிராம உத்தியோகத்தர் பிரிவு) *' : 'Where? (Target GN Division) *')}
+                            </label>
+                            <input
+                              type="text"
+                              value={m.transferDestination || ''}
+                              onChange={(e) => {
+                                const updated = [...members];
+                                updated[idx].transferDestination = e.target.value;
+                                setMembers(updated);
+                              }}
+                              placeholder={m.transferScope === 'EXTERNAL_DS' ? 'உ-ம்: மட்டக்களப்பு / வாழைச்சேனை' : 'உ-ம்: 212A வாகரை வடக்கு'}
+                              className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white font-semibold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-800 mb-0.5">
+                              {isTa ? 'கழிக்கப்படும் / மாற்றப்பட்ட திகதி *' : 'Deduction / Transfer Date *'}
+                            </label>
+                            <input
+                              type="date"
+                              value={m.transferDate || ''}
+                              onChange={(e) => {
+                                const updated = [...members];
+                                updated[idx].transferDate = e.target.value;
+                                setMembers(updated);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-purple-300 rounded-lg bg-white font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {isDeceased && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-800 mb-0.5">
+                              {isTa ? 'மரணமடைந்த / கழிக்கப்படும் திகதி *' : 'Date of Death / Deduction *'}
+                            </label>
+                            <input
+                              type="date"
+                              value={m.deathDate || ''}
+                              onChange={(e) => {
+                                const updated = [...members];
+                                updated[idx].deathDate = e.target.value;
+                                setMembers(updated);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-400 rounded-lg bg-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-800 mb-0.5">
+                              {isTa ? 'இறப்புச் சான்றிதழ் இலக்கம்' : 'Death Certificate No.'}
+                            </label>
+                            <input
+                              type="text"
+                              value={m.deathCertificateNo || ''}
+                              onChange={(e) => {
+                                const updated = [...members];
+                                updated[idx].deathCertificateNo = e.target.value;
+                                setMembers(updated);
+                              }}
+                              placeholder="DC-VHR-2026-..."
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-800 mb-0.5">
+                              {isTa ? 'குறிப்பு' : 'Remarks'}
+                            </label>
+                            <input
+                              type="text"
+                              value={m.deathRemarks || ''}
+                              onChange={(e) => {
+                                const updated = [...members];
+                                updated[idx].deathRemarks = e.target.value;
+                                setMembers(updated);
+                              }}
+                              placeholder="குறிப்புகள்..."
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -2303,7 +2723,16 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                   </div>
                   <div>
                     <span className="text-[9px] text-slate-500 uppercase font-bold block">Status / Single Parent</span>
-                    <span className="font-bold">{meta.status} · {assets.isSingleParent ? 'ஒற்றைப் பெற்றோர் (Yes)' : 'No'}</span>
+                    <span className="font-bold">
+                      {meta.status} ·{' '}
+                      {meta.residencyStatus === 'PERMANENT'
+                        ? 'நிரந்தர வதிவு'
+                        : meta.residencyStatus === 'TRANSFERRED_GN'
+                        ? `GN மாற்றம் (${meta.transferDestination} | ${meta.transferDate})`
+                        : `வெளி DS மாற்றம் (${meta.transferDestination} | ${meta.transferDate})`}
+                      {' · '}
+                      {assets.isSingleParent ? 'ஒற்றைப் பெற்றோர் (Yes)' : 'No'}
+                    </span>
                   </div>
                   <div>
                     <span className="text-[9px] text-slate-500 uppercase font-bold block">Head Name (Tamil)</span>
@@ -2328,7 +2757,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
               <div className="border border-slate-300 rounded-lg overflow-hidden">
                 <div className="bg-slate-800 text-white px-3 py-1.5 font-extrabold text-[11px] flex items-center justify-between">
                   <span>B. குடும்ப உறுப்பினர் விபரம் (FAMILY MEMBERS UNDER HEAD QR: {effectiveFamilyCode})</span>
-                  <span>Total: {members.length}</span>
+                  <span>Active: {membersGlance.totalMembers} / Recorded: {members.length}</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-[10px]">
@@ -2341,7 +2770,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         <th className="py-1.5 px-2 border-r border-slate-200">வயது (Age)</th>
                         <th className="py-1.5 px-2 border-r border-slate-200">கல்வி (Edu)</th>
                         <th className="py-1.5 px-2 border-r border-slate-200">School 5–16</th>
-                        <th className="py-1.5 px-2">மருத்துவ / விசேட நிலை (Health / Special)</th>
+                        <th className="py-1.5 px-2">மருத்துவ / வதிவிட நிலை (Health / Status)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
@@ -2349,6 +2778,8 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         const age = computeAgeFromDobSafe(m.dob);
                         const eduOpt = EDUCATION_OPTIONS.find((e) => e.value === m.educationLevel);
                         const tags: string[] = [];
+                        if (m.status === 'DECEASED') tags.push(`மரணம் (${m.deathDate || ''})`);
+                        else if (m.status === 'TRANSFERRED') tags.push(`மாற்றம்: ${m.transferDestination || ''} (${m.transferDate || ''})`);
                         if (m.hasCkdu || m.chronicIllness === 'CKD_KIDNEY') tags.push('CKDU');
                         else if (m.chronicIllness && m.chronicIllness !== 'NONE' && m.chronicIllness !== 'DISABILITY_PHYSICAL') tags.push(m.chronicIllness);
                         if (m.isDisability) tags.push('Disability');
@@ -2357,7 +2788,7 @@ export const OfficialFamilyDossierWindow: React.FC<OfficialFamilyDossierWindowPr
                         if (m.isPregnant) tags.push('Pregnant');
 
                         return (
-                          <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
+                          <tr key={idx} className={m.status !== 'ACTIVE' ? 'bg-slate-100 text-slate-500' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                             <td className="py-1 px-2 border-r border-slate-200 font-mono font-bold">{idx + 1}</td>
                             <td className="py-1 px-2 border-r border-slate-200 font-bold">
                               {(idx === 0 && !m.nameTa ? meta.applicantNameTa : m.nameTa) || '—'}

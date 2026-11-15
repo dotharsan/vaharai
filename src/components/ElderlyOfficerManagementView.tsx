@@ -8,6 +8,8 @@ import {
   FamilyRelationship,
   FAMILY_RELATIONSHIP_OPTIONS,
   ALL_WELFARE_SCHEMES_LIST,
+  isBeneficiaryActive,
+  normDivCode,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { parseSriLankanNic } from '../utils/nicParser';
@@ -69,13 +71,15 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
 
   const dsDivisionsList = useMemo(() => loadDsDivisions(), []);
 
-  // Filter ONLY senior citizens (Age >= 60, or isElderly, or ELDERLY welfare scheme)
+  // Filter ONLY active senior citizens (Age >= 60, or isElderly, or ELDERLY welfare scheme) + lock to GN division if GN user
   const elderlyCitizens = useMemo(() => {
     return beneficiaries.filter((b) => {
+      if (!isBeneficiaryActive(b)) return false;
+      if (isGramaNiladhari && normDivCode(b.divisionCode) !== normDivCode(officerDivision)) return false;
       const age = calculateAge(b.dob, b.nic);
       return b.isElderly || age >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus;
     });
-  }, [beneficiaries]);
+  }, [beneficiaries, isGramaNiladhari, officerDivision]);
 
   // District HQ Senior Citizens
   const districtHqElderly = useMemo(() => {
@@ -89,6 +93,7 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
     return dsDivisionsList.map((ds) => {
       const dsList = beneficiaries.filter(
         (b) =>
+          isBeneficiaryActive(b) &&
           (b.dsDivisionId || 'DS_VAHARAI') === ds.id &&
           (b.isElderly || calculateAge(b.dob, b.nic) >= 60 || b.welfareScheme === 'ELDERLY' || b.elderlyAllowanceStatus)
       );
@@ -349,8 +354,8 @@ export const ElderlyOfficerManagementView: React.FC<ElderlyOfficerManagementView
       }
 
       // 1. Division restriction
-      if (isGramaNiladhari && b.divisionCode !== officerDivision) return false;
-      if (!isGramaNiladhari && selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) return false;
+      if (isGramaNiladhari && normDivCode(b.divisionCode) !== normDivCode(officerDivision)) return false;
+      if (!isGramaNiladhari && selectedDivision !== 'ALL' && normDivCode(b.divisionCode) !== normDivCode(selectedDivision)) return false;
 
       // 2. Age Bracket
       const age = calculateAge(b.dob);

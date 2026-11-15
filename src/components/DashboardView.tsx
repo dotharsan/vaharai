@@ -9,6 +9,9 @@ import {
   PregnantMotherRecord,
   LandRecord,
   HouseholdData,
+  isBeneficiaryActive,
+  isHouseholdActive,
+  isPregnantMotherActive,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { calculateAge, getDsDivisionById, logAuditAction } from '../services/storage';
@@ -81,9 +84,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const normDiv = (code?: string) => (code || '').trim().toUpperCase();
   const normalizedOfficerDiv = normDiv(divisionCode);
 
+  const activeBeneficiariesPool = beneficiaries.filter(isBeneficiaryActive);
+  const activeHouseholdsPool = households.filter(isHouseholdActive);
+  const activePregnantPool = pregnantMothers.filter((m) => isPregnantMotherActive(m, beneficiaries));
+
   const relevantBeneficiaries = isGN
-    ? beneficiaries.filter((b) => normDiv(b.divisionCode) === normalizedOfficerDiv)
-    : beneficiaries;
+    ? activeBeneficiariesPool.filter((b) => normDiv(b.divisionCode) === normalizedOfficerDiv)
+    : activeBeneficiariesPool;
 
   const relevantTokens = isGN
     ? tokens.filter((tok) => normDiv(tok.divisionCode) === normalizedOfficerDiv)
@@ -94,16 +101,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     : assistanceRecords;
 
   const relevantPregnant = isGN
-    ? pregnantMothers.filter((m) => normDiv(m.divisionCode) === normalizedOfficerDiv)
-    : pregnantMothers;
+    ? activePregnantPool.filter((m) => normDiv(m.divisionCode) === normalizedOfficerDiv)
+    : activePregnantPool;
 
   const relevantLand = isGN
     ? landRecords.filter((l) => normDiv(l.divisionCode) === normalizedOfficerDiv)
     : landRecords;
 
   const relevantHouseholds = isGN
-    ? households.filter((h) => normDiv(h.divisionCode) === normalizedOfficerDiv)
-    : households;
+    ? activeHouseholdsPool.filter((h) => normDiv(h.divisionCode) === normalizedOfficerDiv)
+    : activeHouseholdsPool;
 
   // Key Counts
   const totalCitizens = relevantBeneficiaries.length;
@@ -160,11 +167,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     GN {divisionCode}
                   </span>
                 )}
-                {isGN && beneficiaries.length > relevantBeneficiaries.length && (
+                {isGN && activeBeneficiariesPool.length > relevantBeneficiaries.length && (
                   <span className="bg-emerald-950/80 border border-amber-400/50 text-amber-200 px-2.5 py-1 rounded-lg text-[11px]">
                     {lang === 'ta'
-                      ? `மொத்த செயலகம்: ${beneficiaries.length} · உங்கள் பிரிவு: ${relevantBeneficiaries.length}`
-                      : `DS Total: ${beneficiaries.length} · Your GN: ${relevantBeneficiaries.length}`}
+                      ? `மொத்த செயலகம்: ${activeBeneficiariesPool.length} · உங்கள் பிரிவு: ${relevantBeneficiaries.length}`
+                      : `DS Total: ${activeBeneficiariesPool.length} · Your GN: ${relevantBeneficiaries.length}`}
                   </span>
                 )}
               </div>
@@ -429,10 +436,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Two Column Section: 16 GN Divisions & Live Audit */}
+      {/* Two Column Section: GN Divisions & Live Audit (Super Admin Only) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: 16 GN Divisions of Vaharai */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+        {/* Left: GN Divisions */}
+        <div className={`${isSuperAdmin ? 'lg:col-span-2' : 'lg:col-span-3'} bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs`}>
           <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
             <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
               {lang === 'ta'
@@ -454,7 +461,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {divisions.map((d) => {
-                  const divCitizens = beneficiaries.filter((b) => normDiv(b.divisionCode) === normDiv(d.code)).length;
+                  const divCitizens = activeBeneficiariesPool.filter((b) => normDiv(b.divisionCode) === normDiv(d.code)).length;
                   const isCurrentOfficerDiv = isGN && normalizedOfficerDiv === normDiv(d.code);
                   return (
                     <tr
@@ -485,35 +492,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Audit Log / System Activity */}
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col">
-          <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              {t.navAudit}
-            </h3>
-            <span className="text-[11px] text-slate-500 font-mono">Live</span>
-          </div>
+        {/* Right: Audit Log / System Activity (Super Admin Only) */}
+        {isSuperAdmin && (
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                {t.navAudit}
+              </h3>
+              <span className="text-[11px] text-slate-500 font-mono">Live</span>
+            </div>
 
-          <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-80 text-xs">
-            {auditLogs.length === 0 ? (
-              <div className="text-center text-slate-400 py-8">
-                {lang === 'ta' ? 'தணிக்கைப் பதிவுகள் எதுவும் இல்லை' : 'No recent system events.'}
-              </div>
-            ) : (
-              auditLogs.slice(0, 10).map((log) => (
-                <div key={log.id} className="pb-2.5 border-b border-slate-100 last:border-0">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                    <span>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    <span className="font-semibold text-slate-600">{log.userName}</span>
-                  </div>
-                  <div className="text-slate-800 font-medium mt-0.5 leading-snug">
-                    {log.details}
-                  </div>
+            <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-80 text-xs">
+              {auditLogs.length === 0 ? (
+                <div className="text-center text-slate-400 py-8">
+                  {lang === 'ta' ? 'தணிக்கைப் பதிவுகள் எதுவும் இல்லை' : 'No recent system events.'}
                 </div>
-              ))
-            )}
+              ) : (
+                auditLogs.slice(0, 10).map((log) => (
+                  <div key={log.id} className="pb-2.5 border-b border-slate-100 last:border-0">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                      <span>{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className="font-semibold text-slate-600">{log.userName}</span>
+                    </div>
+                    <div className="text-slate-800 font-medium mt-0.5 leading-snug">
+                      {log.details}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

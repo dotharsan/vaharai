@@ -337,6 +337,10 @@ export const ALL_WELFARE_SCHEMES_LIST: WelfareSchemeItem[] = [
 
 export type CitizenStatus = 'ACTIVE' | 'DECEASED' | 'TRANSFERRED';
 
+export type FamilyResidencyStatus = 'PERMANENT' | 'TRANSFERRED_GN' | 'TRANSFERRED_EXTERNAL_DS';
+
+export type TransferScope = 'INTERNAL_GN' | 'EXTERNAL_DS';
+
 export type DisabilityCause = 'ACCIDENT' | 'BIRTH' | 'WAR' | 'ILLNESS' | 'OTHER';
 
 export interface Beneficiary {
@@ -355,16 +359,21 @@ export interface Beneficiary {
   householdNo: string;
   familyCode?: string; // Unified Family / Household Group ID (e.g. "FAM-211-042")
   familyRelationship?: FamilyRelationship;
-  status?: CitizenStatus; // 'ACTIVE' | 'DECEASED' (மரணப்பதிவு) | 'TRANSFERRED' (பதிவுமாற்றம்)
+  status?: CitizenStatus; // 'ACTIVE' (நிரந்தர வதிவு) | 'DECEASED' (மரணம்) | 'TRANSFERRED' (மாற்றம்)
   deceasedDate?: string; // திகதி
   deathDate?: string; // திகதி (Deceased date alias)
   deathCertificateNo?: string; // இறப்பு சான்றிதழ் இலக்கம்
   deathRemarks?: string;
-  transferDate?: string; // மாற்றம் செய்யப்பட்ட திகதி
+  transferScope?: TransferScope; // 'INTERNAL_GN' (உள் GN மாற்றம்) | 'EXTERNAL_DS' (வெளி பிரதேச செயலகம்)
+  transferDate?: string; // மாற்றம் / கழிக்கப்படும் திகதி
   transferredDate?: string; // மாற்றம் செய்யப்பட்ட திகதி (Transfer date alias)
-  transferDestination?: string; // இடமாற்றம் செய்யப்பட்ட பிரதேசம் / மாவட்டம்
+  transferDestination?: string; // எங்கு மாற்றப்பட்டது (GN / வெளி பிரதேச செயலகம்)
   transferredToDivision?: string; // இடமாற்றம் செய்யப்பட்ட பிரதேசம் / மாவட்டம் (Transfer destination alias)
   transferReason?: string; // காரணங்கள்
+  previousDivisionCode?: string; // மாற்றத்திற்கு முன் இருந்த GN பிரிவு
+  transferTargetDivisionCode?: string; // சுப்பர் அட்மின் வழங்கிய புதிய GN பிரிவு
+  transferApprovedBy?: string;
+  transferApprovedAt?: string;
   isPregnantMother?: boolean; // ECDO: கர்ப்பிணித் தாய்
   pregnancyStageMonths?: number; // கர்ப்ப காலம் (மாதங்கள் 1-9)
   isPersonWithDisability?: boolean; // அங்கவீனர் / மாற்றுத்திறனாளி
@@ -574,6 +583,10 @@ export interface PregnantMotherRecord {
   isCompleted: boolean; // 10 மாதங்கள் அடையாளம் இட்ட பின் முடிவு பகுதிக்கு செல்லும் வசதி
   completedDate?: string;
   status: 'WAITING_STAMP' | 'ACTIVE_COLLECTING' | 'COMPLETED'; // காத்திருப்பு வரிசை / பொருட்கள் பெறும் நிலை / முடிவுற்றவை
+  residencyStatus?: CitizenStatus; // 'ACTIVE' | 'DECEASED' | 'TRANSFERRED'
+  transferScope?: TransferScope;
+  transferDestination?: string;
+  deductionDate?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -751,6 +764,16 @@ export interface HouseholdData {
   divisionCode: string; // e.g. "211A"
   dsDivisionId?: string; // e.g. "DS_VAHARAI"
   status: 'DS_ENDORSED' | 'COMMITTEE_APPROVED' | 'GRIEVANCE_PENDING' | 'ACTIVE';
+  residencyStatus?: FamilyResidencyStatus; // 'PERMANENT' (நிரந்தர வதிவு) | 'TRANSFERRED_GN' (உள் GN மாற்றம்) | 'TRANSFERRED_EXTERNAL_DS' (வெளி பிரதேச செயலகம்)
+  transferScope?: TransferScope;
+  transferDestination?: string; // எங்கு மாற்றப்பட்டது?
+  transferDate?: string; // கழிக்கப்படும் / மாற்றப்பட்ட திகதி
+  previousDivisionCode?: string; // மாற்றத்திற்கு முன் இருந்த GN பிரிவு
+  transferTargetDivisionCode?: string; // சுப்பர் அட்மின் அனுமதித்து மாற்றிய புதிய GN பிரிவு
+  transferRequestedBy?: string;
+  transferRequestedAt?: string;
+  transferApprovedBy?: string;
+  transferApprovedAt?: string;
   selectedCategory: 'VULNERABLE' | 'EXTREME_POOR' | 'POOR' | 'TRANSITIONAL' | 'NON_VULNERABLE';
   objectionsStatus?: string; // e.g. "OC-08-10-2025-69523 [Completed]"
   appealsStatus?: string;
@@ -881,7 +904,36 @@ export const isEducationBelowOL = (educationLevel?: string): boolean => {
   return false;
 };
 
+export const normDivCode = (code?: string): string => (code || '').trim().toUpperCase();
+
+export const isBeneficiaryActive = (b?: Partial<Beneficiary> | null): boolean => {
+  if (!b) return false;
+  return !b.status || b.status === 'ACTIVE';
+};
+
+export const isHouseholdActive = (h?: Partial<HouseholdData> | null): boolean => {
+  if (!h) return false;
+  return !h.residencyStatus || h.residencyStatus === 'PERMANENT';
+};
+
+export const isPregnantMotherActive = (
+  m?: Partial<PregnantMotherRecord> | null,
+  beneficiaries?: Beneficiary[]
+): boolean => {
+  if (!m) return false;
+  if (m.residencyStatus && m.residencyStatus !== 'ACTIVE') return false;
+  if (beneficiaries && m.nic) {
+    const cleanNic = m.nic.trim().toUpperCase();
+    if (cleanNic) {
+      const matched = beneficiaries.find((b) => (b.nic || '').trim().toUpperCase() === cleanNic);
+      if (matched && !isBeneficiaryActive(matched)) return false;
+    }
+  }
+  return true;
+};
+
 export const computeMembersAtAGlance = (members: Array<Partial<Beneficiary>> = []): MembersAtAGlanceSummary => {
+  const activeMembers = members.filter((m) => !m.status || m.status === 'ACTIVE');
   let belowOLCount = 0;
   let childrenNotInSchool5To16Count = 0;
   let chronicDiseaseCount = 0;
@@ -890,7 +942,7 @@ export const computeMembersAtAGlance = (members: Array<Partial<Beneficiary>> = [
   let dependentsCount = 0;
   let over70Count = 0;
 
-  for (const m of members) {
+  for (const m of activeMembers) {
     const age = computeAgeFromDobSafe(m.dob);
 
     // Over 70 years
@@ -936,7 +988,7 @@ export const computeMembersAtAGlance = (members: Array<Partial<Beneficiary>> = [
   }
 
   return {
-    totalMembers: members.length,
+    totalMembers: activeMembers.length,
     belowOLCount,
     childrenNotInSchool5To16Count,
     chronicDiseaseCount,

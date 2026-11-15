@@ -8,6 +8,8 @@ import {
   WelfareScheme,
   FAMILY_RELATIONSHIP_OPTIONS,
   ALL_WELFARE_SCHEMES_LIST,
+  isBeneficiaryActive,
+  normDivCode,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { parseSriLankanNic } from '../utils/nicParser';
@@ -59,16 +61,23 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
 }) => {
   const t = translations[lang];
 
-  // STRICT REQUIREMENT 05: Show ONLY disability-related records to DISABILITY_OFFICER
+  const isSuperAdmin = currentUser.role === 'SUPERADMIN';
+  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
+  const isGramaNiladhari = currentUser.role === 'GRAMANIILATHARI';
+  const officerDivision = isGramaNiladhari ? (currentUser.division || '211').trim() : '';
+
+  // STRICT REQUIREMENT: Show ONLY active disability-related records (locked to GN division for GN officers)
   const disabilityBeneficiaries = useMemo(() => {
-    return beneficiaries.filter(
-      (b) => b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature
-    );
-  }, [beneficiaries]);
+    return beneficiaries.filter((b) => {
+      if (!isBeneficiaryActive(b)) return false;
+      if (isGramaNiladhari && normDivCode(b.divisionCode) !== normDivCode(officerDivision)) return false;
+      return b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature;
+    });
+  }, [beneficiaries, isGramaNiladhari, officerDivision]);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDivision, setSelectedDivision] = useState('ALL');
+  const [selectedDivision, setSelectedDivision] = useState(isGramaNiladhari ? officerDivision : 'ALL');
   const [selectedNature, setSelectedNature] = useState('ALL');
   const [selectedCause, setSelectedCause] = useState('ALL');
 
@@ -80,7 +89,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   // Form State for New Disability Registration
   const [formName, setFormName] = useState('');
   const [formNic, setFormNic] = useState('');
-  const [formDivision, setFormDivision] = useState('211');
+  const [formDivision, setFormDivision] = useState(isGramaNiladhari ? officerDivision : '211');
   const [formNature, setFormNature] = useState(DISABILITY_NATURE_OPTIONS[0].value);
   const [formCause, setFormCause] = useState<DisabilityCause>('BIRTH');
   const [formFamilyQr, setFormFamilyQr] = useState('');
@@ -109,7 +118,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
   };
 
   const handleOpenAddModal = () => {
-    const div = isDistrictAdmin ? 'DISTRICT_HQ' : '211';
+    const div = isDistrictAdmin ? 'DISTRICT_HQ' : (isGramaNiladhari ? officerDivision : '211');
     setFormDivision(div);
     setFormFamilyQr('');
     setFormFamilyRelationship('SON');
@@ -123,9 +132,6 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
     setFormNotes('');
     setShowAddModal(true);
   };
-
-  const isSuperAdmin = currentUser.role === 'SUPERADMIN';
-  const isDistrictAdmin = currentUser.role === 'DISTRICT_ADMIN';
 
   // District Admin sub-views: 'district_hq' (District HQ Direct) | 'summary' (14 DS Summary) | 'all' (All Secretariats)
   const [districtSubView, setDistrictSubView] = useState<'district_hq' | 'summary' | 'all'>(isDistrictAdmin ? 'district_hq' : 'all');
@@ -145,6 +151,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
     return dsDivisionsList.map((ds) => {
       const dsList = beneficiaries.filter(
         (b) =>
+          isBeneficiaryActive(b) &&
           (b.dsDivisionId || 'DS_VAHARAI') === ds.id &&
           (b.isPersonWithDisability || b.chronicIllness === 'DISABILITY_PHYSICAL' || b.welfareScheme === 'DISABILITY' || b.disabilityNature)
       );
@@ -228,7 +235,8 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       return;
     }
 
-    const cleanNic = formNic.trim() || `TNIC-${formDivision}-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+    const targetDiv = isGramaNiladhari ? officerDivision : formDivision;
+    const cleanNic = formNic.trim() || `TNIC-${targetDiv}-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
     const exactFamilyQr = formFamilyQr.trim();
     const effectiveFamCode = exactFamilyQr.includes('FAM:')
       ? exactFamilyQr.split('FAM:')[1].split('|')[0].trim()
@@ -236,7 +244,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
 
     const dob = nicParsed.isValid && nicParsed.dob ? nicParsed.dob : '1995-01-01';
     const gender = nicParsed.isValid && nicParsed.gender ? nicParsed.gender : 'MALE';
-    const systemId = generateSystemCitizenId(formDivision, beneficiaries.length + 1);
+    const systemId = generateSystemCitizenId(targetDiv, beneficiaries.length + 1);
 
     const activeSchemes = formWelfareSchemes.length > 0 ? formWelfareSchemes : ['DISABILITY' as WelfareScheme];
     const primaryScheme = activeSchemes[0] || 'DISABILITY';
@@ -251,7 +259,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       dob,
       phone: formPhone.trim(),
       address: formAddress.trim(),
-      divisionCode: formDivision,
+      divisionCode: targetDiv,
       dsDivisionId: isDistrictAdmin ? 'DISTRICT_HQ' : (currentUser.dsDivisionId || 'DS_VAHARAI'),
       familyHead: formFamilyRelationship === 'HEAD',
       householdNo: effectiveFamCode || '',
@@ -323,7 +331,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
         const nameTa = row[1]?.trim() || '';
         const nameEn = row[2]?.trim() || nameTa;
         const nic = row[3]?.trim() || '';
-        const divisionCode = row[4]?.trim() || '211';
+        const divisionCode = isGramaNiladhari ? officerDivision : (row[4]?.trim() || '211');
         const disabilityNature = row[5]?.trim() || 'உடல் ஊனம் (Physical Disability)';
         const disabilityCauseRaw = (row[6] || 'BIRTH').trim().toUpperCase();
         const address = row[7]?.trim() || '';
@@ -408,7 +416,8 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
           if ((b.dsDivisionId || 'DS_VAHARAI') !== selectedDsFilter) return false;
         }
       }
-      if (!isDistrictAdmin && selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) return false;
+      if (isGramaNiladhari && normDivCode(b.divisionCode) !== normDivCode(officerDivision)) return false;
+      if (!isDistrictAdmin && !isGramaNiladhari && selectedDivision !== 'ALL' && normDivCode(b.divisionCode) !== normDivCode(selectedDivision)) return false;
       if (selectedNature !== 'ALL' && b.disabilityNature !== selectedNature && b.disabilityType !== selectedNature) return false;
       if (selectedCause !== 'ALL' && b.disabilityCause !== selectedCause) return false;
       if (searchQuery.trim()) {
@@ -420,7 +429,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
       }
       return true;
     });
-  }, [disabilityBeneficiaries, isDistrictAdmin, districtSubView, selectedDsFilter, selectedDivision, selectedNature, selectedCause, searchQuery]);
+  }, [disabilityBeneficiaries, isDistrictAdmin, isGramaNiladhari, officerDivision, districtSubView, selectedDsFilter, selectedDivision, selectedNature, selectedCause, searchQuery]);
 
   // Cause counts
   const birthCount = disabilityBeneficiaries.filter((b) => b.disabilityCause === 'BIRTH').length;
@@ -751,11 +760,14 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
           <div className="flex items-center gap-2 flex-wrap text-xs">
             {/* Division dropdown */}
             <select
-              value={selectedDivision}
+              value={isGramaNiladhari ? officerDivision : selectedDivision}
+              disabled={isGramaNiladhari}
               onChange={(e) => setSelectedDivision(e.target.value)}
-              className="px-2.5 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
+              className="px-2.5 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800 disabled:bg-slate-100 disabled:font-bold"
             >
-              <option value="ALL">{lang === 'ta' ? 'அனைத்து கிராம பிரிவுகள்' : 'All Divisions'}</option>
+              {!isGramaNiladhari && (
+                <option value="ALL">{lang === 'ta' ? 'அனைத்து கிராம பிரிவுகள்' : 'All Divisions'}</option>
+              )}
               {divisions.map((d) => (
                 <option key={d.code} value={d.code}>
                   {d.code} - {d.nameTa}
@@ -930,7 +942,7 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
                           onClick={() => setViewingCardCitizen(b)}
                           className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-800 rounded font-bold text-[11px] transition-colors"
                         >
-                          ������ அடையாள அட்டை
+                          �� அடையாள அட்டை
                         </button>
                         {isSuperAdmin && (
                           <button
@@ -1091,9 +1103,10 @@ export const DisabilityOfficerManagementView: React.FC<DisabilityOfficerManageme
                   கிராம உத்தியோகத்தர் பிரிவு (GN Division) *
                 </label>
                 <select
-                  value={formDivision}
+                  value={isGramaNiladhari ? officerDivision : formDivision}
+                  disabled={isGramaNiladhari}
                   onChange={(e) => handleDivisionChange(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white disabled:bg-slate-100 disabled:font-bold"
                 >
                   {divisions.filter((d) => d.code !== 'GENERAL').map((d) => (
                     <option key={d.code} value={d.code}>

@@ -32,6 +32,7 @@ import {
   Accessibility,
   Layers,
   MapPin,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { DriveSyncStatus, isDriveAutoSyncEnabled } from '../services/googleDrive';
 import { getDsDivisionForUser, getDsDivisionById } from '../services/storage';
@@ -51,6 +52,7 @@ interface SidebarProps {
   onQuickSync: () => void;
   onSaveToDriveNow: () => void;
   selectedDsDivisionId?: string;
+  transfersDeathsBadgeCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -68,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onQuickSync,
   onSaveToDriveNow,
   selectedDsDivisionId,
+  transfersDeathsBadgeCount,
 }) => {
   const t = translations[lang];
 
@@ -321,6 +324,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       : []),
     ...(isSuperAdmin
       ? [
+          {
+            id: 'transfers-deaths',
+            title: lang === 'ta' ? 'மாற்றங்கள் & மரணப் பதிவேடு' : 'Transfers & Deaths',
+            subtitle: lang === 'ta' ? 'GN அனுமதி, வெளி DS & மரணம்' : 'GN Approvals, External DS & Deceased',
+            icon: ArrowRightLeft,
+            badge:
+              transfersDeathsBadgeCount && transfersDeathsBadgeCount > 0
+                ? String(transfersDeathsBadgeCount)
+                : (lang === 'ta' ? 'சுப்பர் அட்மின்' : 'Super Admin'),
+          },
           {
             id: 'field-map',
             title: lang === 'ta' ? 'கள அலுவலர் நேரடி வரைபடம்' : 'Installed Devices Live Map',

@@ -7,6 +7,8 @@ import {
   User,
   PovertyScoringWeights,
   computeMembersAtAGlance,
+  isHouseholdActive,
+  isBeneficiaryActive,
 } from '../types';
 import { Language } from '../translations/i18n';
 import { OfficialFamilyDossierWindow, DossierWindowTab } from './OfficialFamilyDossierWindow';
@@ -150,6 +152,7 @@ export const MobileFamilyFieldApp: React.FC<MobileFamilyFieldAppProps> = ({
     return households.filter((h) => {
       const famKey = (h.familyCode || h.id).trim().toUpperCase();
       if (showPendingOnly && !pendingKeysSet.has(famKey)) return false;
+      if (!showPendingOnly && !isHouseholdActive(h)) return false;
       if (activeDivFilter !== 'ALL' && (h.divisionCode || '').trim().toUpperCase() !== activeDivFilter) return false;
       if (q) {
         const matchesFam =
@@ -539,7 +542,7 @@ export const MobileFamilyFieldApp: React.FC<MobileFamilyFieldAppProps> = ({
               </div>
             ) : (
               filteredHouseholds.map((h) => {
-                const members = beneficiaries.filter((b) => b.familyCode === h.familyCode);
+                const members = beneficiaries.filter((b) => b.familyCode === h.familyCode && isBeneficiaryActive(b));
                 const famKey = (h.familyCode || h.id).trim().toUpperCase();
                 const isPendingUpload = pendingKeysSet.has(famKey);
                 const g = computeMembersAtAGlance(members);
@@ -910,6 +913,7 @@ export const MobileFamilyFieldApp: React.FC<MobileFamilyFieldAppProps> = ({
         canEdit={canEdit}
         isSuperAdmin={isSuperAdmin}
         lockedDivisionCode={lockedDiv || undefined}
+        currentUserName={currentUser.name}
         onClose={() => {
           setDossierOpen(false);
           setEditingHousehold(null);

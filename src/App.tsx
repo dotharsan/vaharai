@@ -105,6 +105,7 @@ import { OfficeLayoutModal } from './components/OfficeLayoutModal';
 import { Sidebar } from './components/Sidebar';
 import { MobileFamilyFieldApp } from './components/MobileFamilyFieldApp';
 import { FieldOfficersLocationMapView } from './components/FieldOfficersLocationMapView';
+import { SuperAdminTransfersDeathsView } from './components/SuperAdminTransfersDeathsView';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useFieldLocationReporter, detectInstalledPwa } from './services/fieldLocationTracker';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
@@ -1160,11 +1161,11 @@ export default function App() {
     safeTab = 'dashboard';
   } else if (isLandOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
     safeTab = 'land';
-  } else if (isElderlyOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
+  } else if (isElderlyOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions' && currentTab !== 'family-center') {
     safeTab = 'elderly';
-  } else if (isMaternityOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
+  } else if (isMaternityOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions' && currentTab !== 'family-center') {
     safeTab = 'maternity';
-  } else if (isDisabilityOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions') {
+  } else if (isDisabilityOfficer && currentTab !== 'universal-search' && currentTab !== 'petitions' && currentTab !== 'family-center') {
     safeTab = 'disability';
   } else if (currentTab === 'land' && !canAccessLand) {
     safeTab = 'dashboard';
@@ -1173,6 +1174,8 @@ export default function App() {
   } else if (currentTab === 'staff' && !canAccessStaff) {
     safeTab = 'dashboard';
   } else if (currentTab === 'field-map' && !isSuperAdmin) {
+    safeTab = 'dashboard';
+  } else if (currentTab === 'transfers-deaths' && !isSuperAdmin) {
     safeTab = 'dashboard';
   } else if (currentTab === 'services' && !isSuperAdmin) {
     safeTab = 'dashboard';
@@ -1298,6 +1301,14 @@ export default function App() {
             onQuickSync={handleQuickSyncNow}
             onSaveToDriveNow={handleSaveToDriveNow}
             selectedDsDivisionId={selectedDsDivisionId}
+            transfersDeathsBadgeCount={
+              isSuperAdmin
+                ? scopedHouseholds.filter(
+                    (h) => h.residencyStatus === 'TRANSFERRED_GN' || h.residencyStatus === 'TRANSFERRED_EXTERNAL_DS'
+                  ).length +
+                  scopedBeneficiaries.filter((b) => b.status === 'TRANSFERRED' || b.status === 'DECEASED').length
+                : undefined
+            }
           />
         )}
 
@@ -1369,7 +1380,7 @@ export default function App() {
             tokens={scopedTokens}
             divisions={scopedDivisions}
             users={scopedUsers}
-            auditLogs={auditLogs}
+            auditLogs={isSuperAdmin ? auditLogs : []}
             assistanceRecords={scopedAssistanceRecords}
             pregnantMothers={scopedPregnantMothers}
             landRecords={scopedLandRecords}
@@ -1407,6 +1418,7 @@ export default function App() {
         {safeTab === 'maternity' && (
           <PregnantMothersView
             pregnantMothers={isDistrictAdmin ? pregnantMothers : scopedPregnantMothers}
+            beneficiaries={isDistrictAdmin ? beneficiaries : scopedBeneficiaries}
             divisions={isDistrictAdmin ? divisions : scopedDivisions}
             currentUser={currentUser}
             lang={lang}
@@ -1606,6 +1618,19 @@ export default function App() {
             divisions={scopedDivisions}
             lang={lang}
             selectedDsDivisionId={selectedDsDivisionId}
+          />
+        )}
+
+        {safeTab === 'transfers-deaths' && isSuperAdmin && (
+          <SuperAdminTransfersDeathsView
+            households={scopedHouseholds}
+            beneficiaries={scopedBeneficiaries}
+            divisions={scopedDivisions}
+            currentUser={currentUser}
+            lang={lang}
+            onUpdateHouseholds={handleUpdateHouseholds}
+            onUpdateBeneficiaries={handleUpdateBeneficiaries}
+            onAuditLog={handleAuditLog}
           />
         )}
       </main>

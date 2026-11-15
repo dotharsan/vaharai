@@ -8,8 +8,10 @@ import {
   WelfareStatus,
   FamilyRelationship,
   CitizenStatus,
+  TransferScope,
   FAMILY_RELATIONSHIP_OPTIONS,
   ALL_WELFARE_SCHEMES_LIST,
+  normDivCode,
 } from '../types';
 import { Language, translations } from '../translations/i18n';
 import { BeneficiaryIdCardModal } from './BeneficiaryIdCardModal';
@@ -80,7 +82,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
   const [selectedWelfare, setSelectedWelfare] = useState<string>('ALL');
   const [selectedIllness, setSelectedIllness] = useState<string>('ALL');
   const [filterYouth16Only, setFilterYouth16Only] = useState<boolean>(false);
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'ACTIVE' | 'DECEASED' | 'TRANSFERRED'>('ALL');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'ACTIVE' | 'DECEASED' | 'TRANSFERRED'>('ACTIVE');
 
   // Specialized Category Quick Filter (ECDO, Disability, WHH, Samurdhi, Family Master)
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'PREGNANT' | 'DISABILITY' | 'WHH' | 'SAMURDHI'>(() => {
@@ -103,6 +105,8 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
     status: CitizenStatus;
     deathDate: string;
     deathCertificateNo: string;
+    deathRemarks: string;
+    transferScope: TransferScope;
     transferredToDivision: string;
     transferredDate: string;
     notes: string;
@@ -110,6 +114,8 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
     status: 'ACTIVE',
     deathDate: new Date().toISOString().slice(0, 10),
     deathCertificateNo: '',
+    deathRemarks: '',
+    transferScope: 'INTERNAL_GN',
     transferredToDivision: '',
     transferredDate: new Date().toISOString().slice(0, 10),
     notes: '',
@@ -143,10 +149,10 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
   const filteredBeneficiaries = useMemo(() => {
     return beneficiaries.filter((b) => {
       // 1. Division restriction
-      if (isGramaNiladhari && b.divisionCode !== officerDivision) {
+      if (isGramaNiladhari && normDivCode(b.divisionCode) !== normDivCode(officerDivision)) {
         return false;
       }
-      if (!isGramaNiladhari && selectedDivision !== 'ALL' && b.divisionCode !== selectedDivision) {
+      if (!isGramaNiladhari && selectedDivision !== 'ALL' && normDivCode(b.divisionCode) !== normDivCode(selectedDivision)) {
         return false;
       }
 
@@ -176,7 +182,13 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
         return false;
       }
 
-      // 6. Search query
+      // 6. Citizen Status filter (Requirement 07: மரணப்பதிவு / பதிவுமாற்றம்)
+      if (selectedStatusFilter !== 'ALL') {
+        const currentStatus = b.status || 'ACTIVE';
+        if (currentStatus !== selectedStatusFilter) return false;
+      }
+
+      // 7. Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchesNic = (b.nic || '').toLowerCase().includes(q);
@@ -187,12 +199,6 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
         const matchesHh = (b.householdNo || '').toLowerCase().includes(q);
         const matchesFam = (b.familyCode || '').toLowerCase().includes(q);
         return matchesNic || matchesId || matchesNameTa || matchesNameEn || matchesPhone || matchesHh || matchesFam;
-      }
-
-      // 7. Citizen Status filter (Requirement 07: மரணப்பதிவு / பதிவுமாற்றம்)
-      if (selectedStatusFilter !== 'ALL') {
-        const currentStatus = b.status || 'ACTIVE';
-        if (currentStatus !== selectedStatusFilter) return false;
       }
 
       return true;
@@ -228,10 +234,12 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
     setStatusModalBeneficiary(b);
     setStatusForm({
       status: b.status || 'ACTIVE',
-      deathDate: b.deathDate || new Date().toISOString().slice(0, 10),
+      deathDate: b.deathDate || b.deceasedDate || new Date().toISOString().slice(0, 10),
       deathCertificateNo: b.deathCertificateNo || '',
-      transferredToDivision: b.transferredToDivision || '',
-      transferredDate: b.transferredDate || new Date().toISOString().slice(0, 10),
+      deathRemarks: b.deathRemarks || '',
+      transferScope: b.transferScope || 'INTERNAL_GN',
+      transferredToDivision: b.transferDestination || b.transferredToDivision || '',
+      transferredDate: b.transferDate || b.transferredDate || new Date().toISOString().slice(0, 10),
       notes: '',
     });
   };
@@ -246,9 +254,16 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
           ...b,
           status: statusForm.status,
           deathDate: statusForm.status === 'DECEASED' ? statusForm.deathDate : undefined,
+          deceasedDate: statusForm.status === 'DECEASED' ? statusForm.deathDate : undefined,
           deathCertificateNo: statusForm.status === 'DECEASED' ? statusForm.deathCertificateNo : undefined,
+          deathRemarks: statusForm.status === 'DECEASED' ? statusForm.deathRemarks : undefined,
+          transferScope: statusForm.status === 'TRANSFERRED' ? statusForm.transferScope : undefined,
+          transferDestination: statusForm.status === 'TRANSFERRED' ? statusForm.transferredToDivision : undefined,
           transferredToDivision: statusForm.status === 'TRANSFERRED' ? statusForm.transferredToDivision : undefined,
+          transferDate: statusForm.status === 'TRANSFERRED' ? statusForm.transferredDate : undefined,
           transferredDate: statusForm.status === 'TRANSFERRED' ? statusForm.transferredDate : undefined,
+          previousDivisionCode:
+            statusForm.status === 'TRANSFERRED' ? b.previousDivisionCode || b.divisionCode : b.previousDivisionCode,
           notes: statusForm.notes
             ? `${b.notes || ''} [Status Update: ${statusForm.status} - ${statusForm.notes}]`.trim()
             : b.notes,
@@ -1198,16 +1213,45 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                 <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-lg space-y-2.5">
                   <div className="font-bold text-purple-950 text-xs flex items-center gap-1.5">
                     <span>🚚</span>
-                    <span>{lang === 'ta' ? 'பதிவுமாற்ற விபரங்கள் (Transfer Out Details)' : 'Transfer Out Details'}</span>
+                    <span>{lang === 'ta' ? 'பதிவுமாற்ற விபரங்கள் (Transfer Details)' : 'Transfer Details'}</span>
                   </div>
                   <div>
                     <label className="block text-purple-900 font-semibold mb-1">
-                      {lang === 'ta' ? 'மாற்றப்பட்டுச் சென்ற பிரதேச செயலகம் / கிராமம்:' : 'Transferred To DS Division / Area:'}
+                      {lang === 'ta' ? 'மாற்றத்தின் வகை:' : 'Transfer Scope:'}
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setStatusForm({ ...statusForm, transferScope: 'INTERNAL_GN' })}
+                        className={`px-2.5 py-1.5 rounded-lg border font-bold text-[11px] ${
+                          statusForm.transferScope === 'INTERNAL_GN'
+                            ? 'bg-amber-700 text-white border-amber-800'
+                            : 'bg-white text-slate-700 border-purple-200'
+                        }`}
+                      >
+                        {lang === 'ta' ? 'கிராம உத்தியோகத்தர் மாற்றம்' : 'GN Transfer (Our DS)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStatusForm({ ...statusForm, transferScope: 'EXTERNAL_DS' })}
+                        className={`px-2.5 py-1.5 rounded-lg border font-bold text-[11px] ${
+                          statusForm.transferScope === 'EXTERNAL_DS'
+                            ? 'bg-purple-800 text-white border-purple-900'
+                            : 'bg-white text-slate-700 border-purple-200'
+                        }`}
+                      >
+                        {lang === 'ta' ? 'வெளி பிரதேச செயலக மாற்றம்' : 'External DS Transfer'}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-purple-900 font-semibold mb-1">
+                      {lang === 'ta' ? 'எங்கு மாற்றப்பட்டது? (GN பிரிவு / வெளி பிரதேச செயலகம்) *' : 'Where Transferred? (GN / External DS) *'}
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="e.g. கோறளைப்பற்று மத்தி (வாழைச்சேனை) / மட்டக்களப்பு"
+                      placeholder="e.g. 212A வாகரை வடக்கு / கோறளைப்பற்று மத்தி"
                       value={statusForm.transferredToDivision}
                       onChange={(e) => setStatusForm({ ...statusForm, transferredToDivision: e.target.value })}
                       className="w-full px-3 py-1.5 border border-purple-300 rounded-lg bg-white"
@@ -1215,7 +1259,7 @@ export const BeneficiariesView: React.FC<BeneficiariesViewProps> = ({
                   </div>
                   <div>
                     <label className="block text-purple-900 font-semibold mb-1">
-                      {lang === 'ta' ? 'பதிவு மாற்றம் செய்யப்பட்ட திகதி:' : 'Date of Transfer:'}
+                      {lang === 'ta' ? 'கழிக்கப்படும் / மாற்றப்பட்ட திகதி (Deduction Date) *' : 'Deduction / Transfer Date *'}
                     </label>
                     <input
                       type="date"
